@@ -1,0 +1,61 @@
+_format_version: "3.0"
+
+# Kong mirror of ../gateway-apigate: four catalogue-API scenarios, one upstream.
+#   GET  /items          -> bare proxy (baseline)
+#   GET  /my-items       -> require_auth only
+#   POST /items/search   -> typed body validation
+#   POST /items/lookup   -> validation + body rewrite ({q} -> {query, limit, source})
+# Lua lives in ./lua/{require_auth,transforms}.lua (mounted into the Kong container).
+# auth-service is reached only from require_auth.lua (by DNS `auth:8001`).
+
+services:
+  - name: data-service
+    host: data
+    port: 8002
+    protocol: http
+    connect_timeout: 3000
+    read_timeout: 10000
+    write_timeout: 10000
+    routes:
+      - name: items-list
+        paths:
+          - /items
+        methods:
+          - GET
+        strip_path: false
+
+      - name: items-mine
+        paths:
+          - /my-items
+        methods:
+          - GET
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - require("require_auth").run()
+
+      - name: items-search
+        paths:
+          - /items/search
+        methods:
+          - POST
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - require("transforms").validate()
+
+      - name: items-lookup
+        paths:
+          - /items/lookup
+        methods:
+          - POST
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - require("transforms").remap()

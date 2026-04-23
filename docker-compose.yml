@@ -1,0 +1,61 @@
+services:
+  auth:
+    build: ./auth-service
+    env_file: ./auth-service/.env
+    ports:
+      - "8001:8001"
+
+  data:
+    build: ./data-service
+    env_file: ./data-service/.env
+    ports:
+      - "8002:8002"
+
+  gateway-apigate:
+    build: ./gateway-apigate
+    env_file:
+      - ./gateway-apigate/.env
+      - ./gateway-apigate/.env.docker
+    ports:
+      - "8080:8080"
+    depends_on:
+      - auth
+      - data
+
+  gateway-kong:
+    build: ./gateway-kong
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: "0.0.0.0:8080"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8081"
+      KONG_PROXY_ACCESS_LOG: "off"
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ACCESS_LOG: "off"
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_LOG_LEVEL: notice
+      KONG_UPSTREAM_KEEPALIVE_POOL_SIZE: "512"
+      KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS: "10000"
+      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "60"
+      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: "require_auth,transforms"
+    volumes:
+      - ./gateway-kong/kong.yml:/kong/kong.yml:ro
+      - ./gateway-kong/lua/require_auth.lua:/usr/local/share/lua/5.1/require_auth.lua:ro
+      - ./gateway-kong/lua/transforms.lua:/usr/local/share/lua/5.1/transforms.lua:ro
+    ports:
+      - "8090:8080"
+      - "8091:8081"
+    depends_on:
+      - auth
+      - data
+
+  gateway-python:
+    build: ./gateway-python
+    environment:
+      ORIGIN_BASE_URL: http://data:8002
+      AUTH_VERIFY_URL: http://auth:8001/verify
+    ports:
+      - "8092:8000"
+    depends_on:
+      - auth
+      - data
