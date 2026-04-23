@@ -1,17 +1,18 @@
-# apigate example
+# apigate-benchmark
 
-Три реализации одного API-шлюза поверх общей пары бэкендов —
-`auth-service` и `data-service`. Публичный контракт и поведение одинаковые;
-отличается только сам шлюз. Удобно сравнивать по latency / throughput /
-сложности конфигурации.
+Head-to-head benchmark of the [apigate](https://github.com/OlegDokuchaev/apigate)
+Rust gateway library against Kong OSS and a hand-rolled Python ASGI gateway.
+All three implementations expose the same four-route contract over the same
+pair of backends — `auth-service` and `data-service` — so the numbers
+measure the gateway, not the surrounding code. Driven by a k6 matrix.
 
-- **gateway-apigate** — Rust на [apigate](https://github.com/OlegDokuchaev/apigate) 0.2.4 (эталон).
-- **gateway-kong** — Kong OSS 3.7 в DB-less-режиме, логика в Lua-плагине `pre-function`.
-- **gateway-python** — Granian + rloop + msgspec + aiohttp на чистом ASGI.
+- **gateway-apigate** — Rust on [apigate](https://github.com/OlegDokuchaev/apigate) 0.2.4 (subject of the benchmark).
+- **gateway-kong** — Kong OSS 3.7 in DB-less mode, logic in a `pre-function` Lua plugin.
+- **gateway-python** — Granian + rloop + msgspec + aiohttp on bare ASGI.
 
-JWT проверяется в шлюзе через `POST /verify`; `data-service` не знает о
-токенах — он видит только `x-user-id` / `x-user-email`, которые шлюз
-подкладывает после проверки.
+JWT verification happens in the gateway via `POST /verify`; `data-service`
+knows nothing about tokens — it only sees `x-user-id` / `x-user-email`
+headers the gateway injects after a successful verification.
 
 ```
                 ┌────────────────────┐ :8080
@@ -30,40 +31,40 @@ client ──JWT──▶ │ gateway-apigate    │ ───┐
                                             └─────────────┘
 ```
 
-## Состав
+## Layout
 
-| Каталог                                          | Стек                                         | Порт         | Назначение                                  |
-|--------------------------------------------------|----------------------------------------------|--------------|---------------------------------------------|
-| [`auth-service/`](auth-service/README.md)        | Go, fasthttp + JWT HS256 + bcrypt            | 8001         | `/register`, `/login`, `/verify` (токен → id) |
-| [`data-service/`](data-service/README.md)        | Go, fasthttp                                 | 8002         | Каталог товаров; доверяет `x-user-id`        |
-| [`gateway-apigate/`](gateway-apigate/README.md)  | Rust, apigate 0.2.4                          | 8080         | Реверс-прокси с `before`-хуком, `json`, `map` |
-| [`gateway-kong/`](gateway-kong/README.md)        | Kong 3.7 (DB-less) + Lua (`pre-function`)    | 8090 / 8091  | То же через декларативный конфиг Kong        |
-| [`gateway-python/`](gateway-python/README.md)    | Granian + rloop + msgspec + aiohttp (ASGI)   | 8092         | То же на чистом Python ASGI                  |
+| Directory                                        | Stack                                        | Port         | Role                                         |
+|--------------------------------------------------|----------------------------------------------|--------------|----------------------------------------------|
+| [`auth-service/`](auth-service/README.md)        | Go, fasthttp + JWT HS256 + bcrypt            | 8001         | `/register`, `/login`, `/verify` (token → id) |
+| [`data-service/`](data-service/README.md)        | Go, fasthttp                                 | 8002         | Product catalogue; trusts `x-user-id`        |
+| [`gateway-apigate/`](gateway-apigate/README.md)  | Rust, apigate 0.2.4                          | 8080         | Reverse proxy with `before` hook, `json`, `map` |
+| [`gateway-kong/`](gateway-kong/README.md)        | Kong 3.7 (DB-less) + Lua (`pre-function`)    | 8090 / 8091  | Same contract via Kong declarative config    |
+| [`gateway-python/`](gateway-python/README.md)    | Granian + rloop + msgspec + aiohttp (ASGI)   | 8092         | Same contract on bare Python ASGI            |
 
-Подробности по каждой реализации — в `README.md` соответствующего каталога.
+Per-implementation details live in the `README.md` of each directory.
 
-## Публичный контракт
+## Public contract
 
-Все три шлюза отдают одинаковый набор роутов на `data-service`:
+All three gateways expose the same routes against `data-service`:
 
-| Метод | Путь             | Поведение шлюза                                                                 |
-|-------|------------------|---------------------------------------------------------------------------------|
-| GET   | `/items`         | Чистое проксирование — baseline без хуков.                                       |
-| GET   | `/my-items`      | Вызов `/verify`, инъекция `x-user-id`/`x-user-email`, `Authorization` снимается. |
-| POST  | `/items/search`  | Валидация тела `{category?: string, max_price?: int}` → форвард как есть.        |
-| POST  | `/items/lookup`  | Декод `{q: string}` → ре-кодирование в `{query, limit, source}` → форвард.       |
+| Method | Path             | Gateway behavior                                                                 |
+|--------|------------------|----------------------------------------------------------------------------------|
+| GET    | `/items`         | Straight proxy — baseline, no hooks.                                             |
+| GET    | `/my-items`      | Calls `/verify`, injects `x-user-id`/`x-user-email`, strips `Authorization`.     |
+| POST   | `/items/search`  | Validates body `{category?: string, max_price?: int}` → forwards as-is.          |
+| POST   | `/items/lookup`  | Decodes `{q: string}` → re-encodes as `{query, limit, source}` → forwards.       |
 
-## Запуск через docker compose
+## Run with docker compose
 
 ```bash
 docker compose up --build
 ```
 
-Поднимается всё сразу: `auth:8001`, `data:8002`,
+Brings everything up: `auth:8001`, `data:8002`,
 `gateway-apigate:8080`, `gateway-kong:8090` (admin `:8091`),
 `gateway-python:8092`.
 
-## Локальный запуск (без Docker)
+## Local run (without Docker)
 
 ```bash
 # 1) auth-service  (Go)
@@ -75,7 +76,7 @@ cd data-service && go run .
 # 3a) gateway-apigate  (Rust)
 cd gateway-apigate && cargo run --release
 
-# 3b) gateway-kong     (Kong OSS — только через Docker)
+# 3b) gateway-kong     (Kong OSS — only via Docker)
 docker compose up --build gateway-kong
 
 # 3c) gateway-python   (Granian)
@@ -85,17 +86,17 @@ pip install -r requirements.txt
 ./scripts/run.sh
 ```
 
-## Пример использования
+## Example usage
 
-Выберите порт нужного шлюза: `8080` (apigate), `8090` (kong), `8092` (python).
-Регистрация и логин — напрямую на `auth-service`; через шлюзы ходит только
-каталог.
+Pick the port of the gateway you want: `8080` (apigate), `8090` (kong), `8092` (python).
+Register and log in directly against `auth-service`; the catalogue is the
+only thing routed through the gateway.
 
 ```bash
-GW=http://localhost:8080        # или :8090 / :8092
+GW=http://localhost:8080        # or :8090 / :8092
 AUTH=http://localhost:8001
 
-# регистрация + логин напрямую в auth-service
+# register + log in directly against auth-service
 curl -s -X POST $AUTH/register \
   -H 'content-type: application/json' \
   -d '{"email":"alice@example.com","password":"hunter22"}'
@@ -105,90 +106,90 @@ TOKEN=$(curl -s -X POST $AUTH/login \
   -d '{"email":"alice@example.com","password":"hunter22"}' \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
 
-# 1) baseline — полный каталог без авторизации
+# 1) baseline — full catalogue, no auth
 curl -s $GW/items
 
-# 2) auth-хук — verify → x-user-id
+# 2) auth hook — verify → x-user-id
 curl -s $GW/my-items -H "Authorization: Bearer $TOKEN"
 
-# 3) валидация тела
+# 3) body validation
 curl -s -X POST $GW/items/search \
   -H 'content-type: application/json' \
   -d '{"category":"office","max_price":300}'
 
-# 4) переписывание тела (public {q} → internal schema)
+# 4) body rewrite (public {q} → internal schema)
 curl -s -X POST $GW/items/lookup \
   -H 'content-type: application/json' \
   -d '{"q":"pen"}'
 
-# без токена /my-items → 401
+# without a token, /my-items → 401
 curl -i $GW/my-items
 ```
 
-## Как работает авторизация
+## How authentication works
 
-1. Клиент логинится в `auth-service` → получает JWT.
-2. Защищённый роут `/my-items` вызывается с `Authorization: Bearer <jwt>`.
-3. Шлюз:
-   - делает `POST http://auth:8001/verify`;
-   - из ответа `{user_id, email}` пишет заголовки `x-user-id` / `x-user-email`;
-   - снимает `Authorization`, чтобы токен не ушёл на upstream.
-4. `data-service` читает только `x-user-id`. О JWT и `auth-service` он ничего не знает.
+1. The client logs in against `auth-service` → receives a JWT.
+2. The protected `/my-items` route is called with `Authorization: Bearer <jwt>`.
+3. The gateway:
+   - issues `POST http://auth:8001/verify`;
+   - from the `{user_id, email}` response, sets `x-user-id` / `x-user-email` headers;
+   - strips `Authorization` so the token never reaches the upstream.
+4. `data-service` only reads `x-user-id`. It knows nothing about JWTs or `auth-service`.
 
-Где живёт хук:
+Where the hook lives:
 
-| Шлюз             | Файл                                                |
-|------------------|-----------------------------------------------------|
-| gateway-apigate  | `gateway-apigate/src/hooks.rs::require_auth`         |
-| gateway-kong     | `gateway-kong/lua/require_auth.lua`                  |
-| gateway-python   | `gateway-python/apigate_bench/auth_client.py` + `gateway.py::handle_my_items` |
+| Gateway          | File                                                                           |
+|------------------|--------------------------------------------------------------------------------|
+| gateway-apigate  | `gateway-apigate/src/hooks.rs::require_auth`                                   |
+| gateway-kong     | `gateway-kong/lua/require_auth.lua`                                            |
+| gateway-python   | `gateway-python/apigate_bench/auth_client.py` + `gateway.py::handle_my_items`  |
 
-## Конфигурация
+## Configuration
 
-Ключевые переменные шлюзов:
+Key gateway env vars:
 
-| Шлюз             | Var                                       | Назначение                                  |
-|------------------|-------------------------------------------|---------------------------------------------|
-| gateway-apigate  | `LISTEN_ADDR`, `AUTH_BACKEND`, `DATA_BACKEND` | URL upstream auth- и data-сервисов           |
-| gateway-apigate  | `REQUEST_TIMEOUT`, `CONNECT_TIMEOUT`, `VERIFY_TIMEOUT` | `humantime`, напр. `3s` / `10s`              |
-| gateway-kong     | `KONG_DECLARATIVE_CONFIG`, `KONG_PROXY_LISTEN` | читаются самим Kong; конфиг в `kong.yml`    |
-| gateway-kong     | `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE`, `KONG_PROXY_ACCESS_LOG`, `KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES` | тюнинг пула / выключение access-лога / разрешённые модули в `pre-function` |
-| gateway-python   | `ORIGIN_BASE_URL`, `AUTH_VERIFY_URL`      | точки входа upstream-ов                     |
-| gateway-python   | `UPSTREAM_*_TIMEOUT`, `AUTH_*_TIMEOUT`    | секунды; auth-путь бюджетируется отдельно   |
+| Gateway          | Var                                       | Purpose                                         |
+|------------------|-------------------------------------------|-------------------------------------------------|
+| gateway-apigate  | `LISTEN_ADDR`, `AUTH_BACKEND`, `DATA_BACKEND` | URLs of auth / data upstreams                |
+| gateway-apigate  | `REQUEST_TIMEOUT`, `CONNECT_TIMEOUT`, `VERIFY_TIMEOUT` | `humantime`, e.g. `3s` / `10s`      |
+| gateway-kong     | `KONG_DECLARATIVE_CONFIG`, `KONG_PROXY_LISTEN` | consumed by Kong itself; config in `kong.yml` |
+| gateway-kong     | `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE`, `KONG_PROXY_ACCESS_LOG`, `KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES` | upstream pool tuning / access log off / modules whitelisted in the `pre-function` sandbox |
+| gateway-python   | `ORIGIN_BASE_URL`, `AUTH_VERIFY_URL`      | upstream entry points                           |
+| gateway-python   | `UPSTREAM_*_TIMEOUT`, `AUTH_*_TIMEOUT`    | seconds; auth gets its own tighter budget       |
 
-Значения по умолчанию — в `.env` / `.env.example` каждого сервиса.
+Defaults live in each service's `.env` / `.env.example`.
 
-## Производительность и параллелизм
+## Performance and concurrency
 
-Все три шлюза настроены одинаково «по-production» — чтобы бенч сравнивал
-**реализации**, а не дефолты рантаймов:
+All three gateways are tuned the same "production-style" way — so the
+benchmark compares **implementations**, not runtime defaults:
 
-- **Auto-scaling по CPU.** tokio (apigate), nginx/Kong и granian (python)
-  поднимают воркеров по числу ядер: tokio — `multi_thread` runtime с
-  `available_parallelism()`, Kong — `worker_processes=auto`, granian —
-  `--workers $(nproc)` через shell-CMD в `gateway-python/Dockerfile`.
-- **Production-аллокатор.** apigate собирается с
-  `mimalloc` как `#[global_allocator]`; python и kong — c `jemalloc` через
-  `LD_PRELOAD` (см. их Dockerfile-ы). Дефолтный glibc `ptmalloc` плохо
-  шкалируется на hot-path с 14+ воркерами; mimalloc/jemalloc дают 5–15% и
-  стабильнее ведут себя на soak-нагрузке.
-- **Kong tuning в compose.** Выключен access-log, upstream-keepalive pool
-  поднят до 512, разрешён `require` модулей `require_auth` / `transforms`
-  в Lua-sandbox `pre-function`.
+- **CPU auto-scaling.** tokio (apigate), nginx/Kong, and granian (python)
+  all scale workers with core count: tokio — `multi_thread` runtime with
+  `available_parallelism()`; Kong — `worker_processes=auto`; granian —
+  `--workers $(nproc)` via the shell `CMD` in `gateway-python/Dockerfile`.
+- **Production allocator.** apigate is built with `mimalloc` as
+  `#[global_allocator]`; python and kong run `jemalloc` via `LD_PRELOAD`
+  (see each Dockerfile). The default glibc `ptmalloc` scales poorly on
+  the hot path once worker count crosses ~14; mimalloc/jemalloc win
+  5–15 % and stay more stable under soak load.
+- **Kong tuning in compose.** Access log off, upstream-keepalive pool
+  raised to 512, `require_auth` / `transforms` whitelisted as the only
+  modules the Lua `pre-function` sandbox may `require()`.
 
-## Нагрузочное тестирование
+## Load testing
 
-В [`load-tests/`](load-tests/README.md) — матрица k6-сценариев для честного
-сравнения:
+[`load-tests/`](load-tests/README.md) contains a k6 matrix for a fair
+head-to-head:
 
-- **3 профиля × 4 роута = 12 прогонов на шлюз.**
-- Профили: `steady` (constant-arrival-rate, 500 RPS × 2 мин),
-  `ramp` (0 → 2000 RPS за 5 мин), `stress` (2500 RPS × 1 мин).
-- Все — **open-model** (`constant-arrival-rate` / `ramping-arrival-rate`):
-  RPS задан, latency отражает состояние шлюза, а не насыщение VU-пула.
+- **3 profiles × 4 routes = 12 runs per gateway.**
+- Profiles: `steady` (constant-arrival-rate, 500 RPS × 2 min),
+  `ramp` (0 → 2000 RPS over 5 min), `stress` (2500 RPS × 1 min).
+- All **open-model** (`constant-arrival-rate` / `ramping-arrival-rate`):
+  RPS is pinned, so latency reflects gateway state rather than VU-pool
+  saturation.
 
-Запуск (поднимать по одному шлюзу за раз, остальные остановить — чтобы не
-делили CPU):
+Run one gateway at a time — stop the others so they don't share CPU:
 
 ```bash
 docker compose up -d auth data gateway-apigate
@@ -197,8 +198,11 @@ docker compose up -d auth data gateway-apigate
 # -> load-tests/results/<gateway>_<route>_<profile>.json
 ```
 
-Дефолты RPS перекрываются env-переменными:
+RPS defaults are overridable via env:
 `STEADY_RPS=800 STRESS_RPS=4000 ./load-tests/run.sh apigate http://localhost:8080`.
-Полный список переменных (включая `COOLDOWN` между прогонами и
-`*_OVERRIDE` для подмножеств матрицы) — в
-[`load-tests/README.md`](load-tests/README.md).
+The full list (including `COOLDOWN` between runs and `*_OVERRIDE` for
+matrix subsets) is in [`load-tests/README.md`](load-tests/README.md).
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
