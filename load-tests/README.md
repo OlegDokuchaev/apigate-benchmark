@@ -128,7 +128,7 @@ cAdvisor runs as a sidecar in `docker-compose.yml`. It samples every
 running container once per second and buffers the last 10 minutes of
 stats in memory. `run.sh` records a `[start_ts, end_ts]` window around
 each k6 iteration, and afterwards `scripts/collect_resources.py` makes
-one HTTP request per container to `GET /api/v2.1/stats/docker/<id>`,
+one HTTP request per container to `GET /api/v2.0/stats/<id>?type=docker`,
 slices the buffer to the window, and writes the aggregated JSON.
 
 - **Post-hoc, not live.** Nothing runs during the k6 iteration — cAdvisor

@@ -80,8 +80,8 @@ def _resolve_id(name: str) -> str | None:
 
 
 def _fetch_raw(cadvisor: str, container_id: str, count: int) -> list[dict[str, Any]]:
-    """GET /api/v2.1/stats/docker/<id>?count=N — chronological list of samples."""
-    url = f'{cadvisor.rstrip("/")}/api/v2.1/stats/docker/{container_id}?count={count}'
+    """GET /api/v2.0/stats/<id>?type=docker&count=N — chronological list of samples."""
+    url = f'{cadvisor.rstrip("/")}/api/v2.0/stats/{container_id}?type=docker&count={count}'
     try:
         with urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT_S) as resp:
             data = json.loads(resp.read().decode())
@@ -91,8 +91,8 @@ def _fetch_raw(cadvisor: str, container_id: str, count: int) -> list[dict[str, A
         raise RuntimeError(f'cAdvisor at {url}: {e}') from e
 
     # Handle every shape cAdvisor has shipped for this endpoint:
-    #   v2.1:   {"<cgroup_path>": {"spec": {...}, "stats": [samples]}}
-    #   older:  {"<cgroup_path>": [samples]}
+    #   v2.0:   {"<id>": {"spec": {...}, "stats": [samples]}}
+    #   older:  {"<id>": [samples]}
     #   direct: [samples]
     if isinstance(data, list):
         return data
