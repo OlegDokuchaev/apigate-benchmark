@@ -184,8 +184,8 @@ benchmark compares **implementations**, not runtime defaults:
 head-to-head:
 
 - **3 profiles × 4 routes = 12 runs per gateway.**
-- Profiles: `steady` (constant-arrival-rate, 500 RPS × 2 min),
-  `ramp` (0 → 2000 RPS over 5 min), `stress` (2500 RPS × 1 min).
+- Profiles: `steady` (constant-arrival-rate, 1500 RPS × 2 min),
+  `ramp` (0 → 6000 RPS over 5 min), `stress` (8000 RPS × 1 min).
 - All **open-model** (`constant-arrival-rate` / `ramping-arrival-rate`):
   RPS is pinned, so latency reflects gateway state rather than VU-pool
   saturation.
