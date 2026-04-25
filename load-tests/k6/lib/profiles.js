@@ -42,10 +42,19 @@ export const profileNames = Object.keys(profiles);
 
 // Per-profile thresholds, co-located with the registry above so all
 // profile-coupled knobs live in one file.
-//   ramp's `delayAbortEval: '10s'` skips connection-setup spikes; without
-//   it k6 trips on the first sample of a freshly-started gateway.
+//   ramp aborts on either signal:
+//     - p99 > 1 s — quality has degraded past usable.
+//     - failure rate > 5 % — gateway is dropping connections / timing out.
+//   The failure-rate threshold catches breakdowns that p99 misses: k6
+//   evaluates p99 globally over the whole run, so a flood of timeouts
+//   late in the ramp is averaged out by the fast samples from earlier.
+//   delayAbortEval skips the first 15 s so connection-setup spikes don't
+//   trip either threshold prematurely.
 export const thresholds = {
     steady: { http_req_failed: [{ threshold: 'rate<0.01', abortOnFail: false }] },
-    ramp:   { http_req_duration: [{ threshold: 'p(99)<1000', abortOnFail: true, delayAbortEval: '10s' }] },
+    ramp: {
+        http_req_failed:   [{ threshold: 'rate<0.05',  abortOnFail: true, delayAbortEval: '15s' }],
+        http_req_duration: [{ threshold: 'p(99)<1000', abortOnFail: true, delayAbortEval: '15s' }],
+    },
     stress: {},
 };
