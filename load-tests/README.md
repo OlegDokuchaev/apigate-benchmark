@@ -31,9 +31,9 @@ profile `items → my-items → search → lookup`.
 
 | Profile | Executor                 | Default shape                |
 |---------|--------------------------|------------------------------|
-| steady  | `constant-arrival-rate`  | 1500 RPS × 2 min             |
-| ramp    | `ramping-arrival-rate`   | 0 → 6000 RPS over 5 min      |
-| stress  | `constant-arrival-rate`  | 8000 RPS × 1 min             |
+| steady  | `constant-arrival-rate`  | 2500 RPS × 2 min             |
+| ramp    | `ramping-arrival-rate`   | 0 → 10000 RPS over 5 min     |
+| stress  | `constant-arrival-rate`  | 12000 RPS × 1 min            |
 
 | Route     | Method / Path         | Exercises                                          |
 |-----------|-----------------------|----------------------------------------------------|
