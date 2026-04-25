@@ -59,3 +59,26 @@ services:
     depends_on:
       - auth
       - data
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    privileged: true
+    ports:
+      - "8099:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=1s
+      - --storage_duration=10m
+      - --disable_metrics=disk,diskIO,tcp,udp,advtcp,percpu,sched,process,hugetlb,referenced_memory,resctrl,cpu_topology,memory_numa
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M

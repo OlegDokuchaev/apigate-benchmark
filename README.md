@@ -62,7 +62,8 @@ docker compose up --build
 
 Brings everything up: `auth:8001`, `data:8002`,
 `gateway-apigate:8080`, `gateway-kong:8090` (admin `:8091`),
-`gateway-python:8092`.
+`gateway-python:8092`, `cadvisor:8099` (container metrics, used by the
+load-test harness).
 
 ## Local run (without Docker)
 
@@ -188,14 +189,18 @@ head-to-head:
 - All **open-model** (`constant-arrival-rate` / `ramping-arrival-rate`):
   RPS is pinned, so latency reflects gateway state rather than VU-pool
   saturation.
+- Per-container CPU / memory / network are pulled from
+  [cAdvisor](https://github.com/google/cadvisor) after each run — see
+  [`load-tests/README.md`](load-tests/README.md).
 
 Run one gateway at a time — stop the others so they don't share CPU:
 
 ```bash
-docker compose up -d auth data gateway-apigate
+docker compose up -d auth data gateway-apigate cadvisor
 
 ./load-tests/run.sh apigate http://localhost:8080
-# -> load-tests/results/<gateway>_<route>_<profile>.json
+# -> load-tests/results/<gateway>_<route>_<profile>.json            (k6 summary)
+# -> load-tests/results/<gateway>_<route>_<profile>_resources.json  (cAdvisor CPU/mem aggregates)
 ```
 
 RPS defaults are overridable via env:
