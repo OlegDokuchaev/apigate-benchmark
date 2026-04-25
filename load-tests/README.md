@@ -46,12 +46,10 @@ All profiles are open-model: RPS is pinned, latency reflects the gateway's
 state rather than VU-pool saturation. Thresholds vary per profile:
 
 - `steady` asserts `http_req_failed < 1 %` — the gateway should be fine here.
-- `ramp` aborts the cell on either signal: `p99 > 1 s` (quality past usable)
-  **or** `http_req_failed > 5 %` (gateway dropping connections / timing out).
-  Failure rate is the faster signal because k6 evaluates `p99` globally over
-  the whole run — a flood of timeouts late in the ramp gets averaged out by
-  the fast samples from the early phase. The first 15 s are excluded so
-  connection-setup spikes don't trip either threshold prematurely.
+- `ramp` aborts the cell on either signal: `p99 > 1 s` **or**
+  `http_req_failed > 5 %`. Both are scoped to `{scenario:ramp}` so
+  `setup()` requests don't dilute the metric, and have a 15 s grace
+  period so connection-setup spikes don't trip them prematurely.
 - `stress` has no thresholds: we want to observe degradation, not assert it.
 
 ## Running

@@ -15,9 +15,7 @@ if (!profiles[PROFILE]) fail(`unknown PROFILE=${PROFILE}`);
 
 export const options = {
     scenarios: { [PROFILE]: profiles[PROFILE]() },
-    thresholds: thresholds[PROFILE] ?? {},
-    // One k6 run = one route × one profile × one gateway, so every metric can
-    // safely carry these as global tags instead of per-request ones.
+    thresholds: thresholds[PROFILE],
     tags: { profile: PROFILE, gateway: GATEWAY_NAME, route: ROUTE },
     discardResponseBodies: true,
     summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],

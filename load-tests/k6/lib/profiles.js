@@ -40,21 +40,27 @@ export const profiles = {
 
 export const profileNames = Object.keys(profiles);
 
-// Per-profile thresholds, co-located with the registry above so all
-// profile-coupled knobs live in one file.
-//   ramp aborts on either signal:
-//     - p99 > 1 s — quality has degraded past usable.
-//     - failure rate > 5 % — gateway is dropping connections / timing out.
-//   The failure-rate threshold catches breakdowns that p99 misses: k6
-//   evaluates p99 globally over the whole run, so a flood of timeouts
-//   late in the ramp is averaged out by the fast samples from earlier.
-//   delayAbortEval skips the first 15 s so connection-setup spikes don't
-//   trip either threshold prematurely.
+// Per-profile thresholds. Scoped to the scenario tag so setup() requests
+// (e.g. /register + /login for my-items) don't dilute the main load metric.
+// Scenario name matches PROFILE because options.scenarios is keyed by PROFILE.
+//   steady — soft floor: fail the run if >1 % errored (no abort, just exit code).
+//   ramp   — hard abort on either signal: p99 > 1 s or failure rate > 5 %.
+//            delayAbortEval skips the first 15 s so connection-setup spikes
+//            don't trip either threshold prematurely.
+//   stress — no thresholds; we want to observe degradation, not assert it.
 export const thresholds = {
-    steady: { http_req_failed: [{ threshold: 'rate<0.01', abortOnFail: false }] },
+    steady: {
+        'http_req_failed{scenario:steady}': [
+            { threshold: 'rate<0.01', abortOnFail: false },
+        ],
+    },
     ramp: {
-        http_req_failed:   [{ threshold: 'rate<0.05',  abortOnFail: true, delayAbortEval: '15s' }],
-        http_req_duration: [{ threshold: 'p(99)<1000', abortOnFail: true, delayAbortEval: '15s' }],
+        'http_req_failed{scenario:ramp}': [
+            { threshold: 'rate<0.05', abortOnFail: true, delayAbortEval: '15s' },
+        ],
+        'http_req_duration{scenario:ramp}': [
+            { threshold: 'p(99)<1000', abortOnFail: true, delayAbortEval: '15s' },
+        ],
     },
     stress: {},
 };
