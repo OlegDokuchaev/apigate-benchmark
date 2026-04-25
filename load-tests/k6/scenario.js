@@ -1,6 +1,6 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { profiles } from './lib/profiles.js';
+import { profiles, thresholds } from './lib/profiles.js';
 import { routes } from './lib/routes.js';
 import { summary } from './lib/summary.js';
 
@@ -13,16 +13,9 @@ const GATEWAY_NAME = __ENV.GATEWAY_NAME || 'unknown';
 if (!routes[ROUTE]) fail(`unknown ROUTE=${ROUTE}`);
 if (!profiles[PROFILE]) fail(`unknown PROFILE=${PROFILE}`);
 
-// Thresholds are enabled only for `steady`: ramp and stress deliberately push
-// the gateway out of the green zone, so an assert-style threshold there just
-// turns the run into a pass/fail guessing game.
-const thresholds = PROFILE === 'steady'
-    ? { http_req_failed: [{ threshold: 'rate<0.01', abortOnFail: false }] }
-    : {};
-
 export const options = {
     scenarios: { [PROFILE]: profiles[PROFILE]() },
-    thresholds,
+    thresholds: thresholds[PROFILE] ?? {},
     // One k6 run = one route × one profile × one gateway, so every metric can
     // safely carry these as global tags instead of per-request ones.
     tags: { profile: PROFILE, gateway: GATEWAY_NAME, route: ROUTE },

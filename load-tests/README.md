@@ -43,9 +43,13 @@ profile `items → my-items → search → lookup`.
 | lookup    | `POST /items/lookup`  | Typed validation + body rewrite (`{q}` → internal shape). |
 
 All profiles are open-model: RPS is pinned, latency reflects the gateway's
-state rather than VU-pool saturation. Thresholds (`http_req_failed < 1 %`)
-apply only to `steady`; `ramp` / `stress` deliberately push past the green
-zone, so a pass/fail threshold there would just add noise.
+state rather than VU-pool saturation. Thresholds vary per profile:
+
+- `steady` asserts `http_req_failed < 1 %` — the gateway should be fine here.
+- `ramp` aborts the cell once `p99 > 1 s`. Past that latency has run away;
+  ramping further just collects garbage on a flatlined service. The first
+  10 s are excluded so connection-setup spikes don't trip the threshold.
+- `stress` has no thresholds: we want to observe degradation, not assert it.
 
 ## Running
 
@@ -195,9 +199,8 @@ a Linux host — the VM layer adds noise.
 - **Response bodies discarded.** `discardResponseBodies: true` keeps k6
   from allocating response buffers we don't need — the benchmark cares
   about status code and latency, not payload contents.
-- **Thresholds only in `steady`.** `ramp` / `stress` intentionally hit the
-  failure regime; an assert-style `http_req_failed < 1 %` would turn those
-  into red runs for reasons the benchmark is meant to measure.
+- **Thresholds.** Per-profile, listed in [Matrix](#matrix) above; defined
+  in `k6/lib/profiles.js` alongside the profile registry.
 - **30 s cooldown between runs.** Lets upstream TCP connections drain
   (TIME_WAIT ≈ 60 s on Linux, 30 s is a compromise between isolation and
   total matrix wall-clock time). Override with `COOLDOWN=60`.

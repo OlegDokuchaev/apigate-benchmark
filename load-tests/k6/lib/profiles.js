@@ -39,3 +39,13 @@ export const profiles = {
 };
 
 export const profileNames = Object.keys(profiles);
+
+// Per-profile thresholds, co-located with the registry above so all
+// profile-coupled knobs live in one file.
+//   ramp's `delayAbortEval: '10s'` skips connection-setup spikes; without
+//   it k6 trips on the first sample of a freshly-started gateway.
+export const thresholds = {
+    steady: { http_req_failed: [{ threshold: 'rate<0.01', abortOnFail: false }] },
+    ramp:   { http_req_duration: [{ threshold: 'p(99)<1000', abortOnFail: true, delayAbortEval: '10s' }] },
+    stress: {},
+};
