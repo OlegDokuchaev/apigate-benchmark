@@ -27,16 +27,28 @@ services:
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /kong/kong.yml
-      KONG_PROXY_LISTEN: "0.0.0.0:8080"
+      # backlog=1024 raises listen(2) accept queue (kernel still clamps to
+      # net.core.somaxconn — raise that on the host too). reuseport gives
+      # each nginx worker its own accept queue, which scales linearly with
+      # cores under k6 ramping-arrival-rate bursts.
+      KONG_PROXY_LISTEN: "0.0.0.0:8080 backlog=1024 reuseport"
       KONG_ADMIN_LISTEN: "0.0.0.0:8081"
       KONG_PROXY_ACCESS_LOG: "off"
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ACCESS_LOG: "off"
       KONG_ADMIN_ERROR_LOG: /dev/stderr
       KONG_LOG_LEVEL: notice
+      # Lift nginx's per-worker connection cap from the 1024 default — at
+      # 4 workers × 1024 we run out of slots well before saturating CPU.
+      KONG_NGINX_HTTP_WORKER_CONNECTIONS: "16384"
+      # TCP_NODELAY on upstream sockets — the 4 routes carry small JSON,
+      # Nagle's 40ms cork would dominate latency.
+      KONG_NGINX_PROXY_TCP_NODELAY: "on"
       KONG_UPSTREAM_KEEPALIVE_POOL_SIZE: "512"
       KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS: "10000"
-      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "60"
+      # Match apigate / python pool_idle_timeout so the three implementations
+      # are compared at the same upstream-pool aging behaviour.
+      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "120"
       KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: "require_auth,transforms"
     volumes:
       - ./gateway-kong/kong.yml:/kong/kong.yml:ro
