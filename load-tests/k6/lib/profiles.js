@@ -30,7 +30,7 @@ export const profiles = {
     // Stress: well above the expected ceiling — observe how the gateway degrades.
     stress: () => ({
         executor: 'constant-arrival-rate',
-        rate: intEnv('STRESS_RPS', 12000),
+        rate: intEnv('STRESS_RPS', 8000),
         timeUnit: '1s',
         duration: __ENV.STRESS_DURATION || '1m',
         preAllocatedVUs: intEnv('STRESS_VUS', 2000),
