@@ -20,7 +20,16 @@ class Settings(BaseSettings):
 
     # aiohttp connector tuning — unlimited pool, DNS cache on.
     AIOHTTP_CONNECTOR_LIMIT: int = 0
+    # Per-host idle pool cap. 0 = unlimited (matches AIOHTTP_CONNECTOR_LIMIT
+    # default), but on bursty ramps it pays to bound it explicitly so the
+    # event loop doesn't spin up an unbounded number of FDs and blow past
+    # the soft `ulimit -n`.
+    AIOHTTP_LIMIT_PER_HOST: int = 256
     AIOHTTP_DNS_TTL: int = 300
+    # How long aiohttp keeps idle keep-alive connections in the pool. Default
+    # is 15s — too short for k6 profile transitions (steady → pause → ramp);
+    # idle sockets time out and the next wave pays a full TCP handshake.
+    AIOHTTP_KEEPALIVE_TIMEOUT: float = 120.0
 
     # Timeouts. Auth is on the request critical path, so a tighter budget.
     UPSTREAM_CONNECT_TIMEOUT: float = 3.0

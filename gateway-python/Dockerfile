@@ -23,4 +23,8 @@ COPY apigate_bench ./apigate_bench
 EXPOSE 8000
 # --workers $(nproc) — auto-scale to available CPU cores, same as Kong's
 # default worker_processes=auto and tokio's default multi_thread runtime.
-CMD ["sh", "-c", "exec granian --interface asgi --host 0.0.0.0 --port 8000 --workers $(nproc) --runtime-mode st --loop rloop apigate_bench.gateway:app"]
+# --backlog 4096 — listen(2) backlog. With SO_REUSEPORT (granian default
+# for multi-worker mode) it splits per-worker: backpressure = backlog/workers,
+# so at 4 workers each gets a 1024-deep accept queue + in-flight cap.
+# Kernel still clamps to net.core.somaxconn — raise that on the host too.
+CMD ["sh", "-c", "exec granian --interface asgi --host 0.0.0.0 --port 8000 --workers $(nproc) --backlog 4096 --runtime-mode st --loop rloop apigate_bench.gateway:app"]

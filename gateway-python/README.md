@@ -34,17 +34,19 @@ Error envelope is always `{"error": "<message>"}`. Status codes:
 
 Defaults live in `.env.example`. In Docker, values come from compose env.
 
-| Variable                   | Default                         | Purpose                                          |
-|----------------------------|---------------------------------|--------------------------------------------------|
-| `ORIGIN_BASE_URL`          | `http://127.0.0.1:8002`         | `data-service` base URL.                         |
-| `AUTH_VERIFY_URL`          | `http://127.0.0.1:8001/verify`  | Full URL of `auth-service` /verify.              |
-| `MAX_BODY_BYTES`           | `1048576`                       | Buffer limit for buffered endpoints.             |
-| `AIOHTTP_CONNECTOR_LIMIT`  | `0`                             | `TCPConnector` total pool limit (`0` = unlimited). |
-| `AIOHTTP_DNS_TTL`          | `300`                           | aiohttp DNS cache TTL (s).                       |
-| `UPSTREAM_CONNECT_TIMEOUT` | `3.0`                           | Data upstream connect (s).                       |
-| `UPSTREAM_TOTAL_TIMEOUT`   | `10.0`                          | Data upstream total (s).                         |
-| `AUTH_CONNECT_TIMEOUT`     | `1.0`                           | Auth upstream connect (s) — tighter than data.   |
-| `AUTH_TOTAL_TIMEOUT`       | `3.0`                           | Auth upstream total (s).                         |
+| Variable                    | Default                         | Purpose                                          |
+|-----------------------------|---------------------------------|--------------------------------------------------|
+| `ORIGIN_BASE_URL`           | `http://127.0.0.1:8002`         | `data-service` base URL.                         |
+| `AUTH_VERIFY_URL`           | `http://127.0.0.1:8001/verify`  | Full URL of `auth-service` /verify.              |
+| `MAX_BODY_BYTES`            | `1048576`                       | Buffer limit for buffered endpoints.             |
+| `AIOHTTP_CONNECTOR_LIMIT`   | `0`                             | `TCPConnector` total pool limit (`0` = unlimited). |
+| `AIOHTTP_LIMIT_PER_HOST`    | `256`                           | Per-host idle pool cap — bounds the FD blow-up on bursty ramps even when `AIOHTTP_CONNECTOR_LIMIT=0`. |
+| `AIOHTTP_DNS_TTL`           | `300`                           | aiohttp DNS cache TTL (s).                       |
+| `AIOHTTP_KEEPALIVE_TIMEOUT` | `120.0`                         | How long aiohttp keeps idle keep-alive sockets in the pool. Aligned with `POOL_IDLE_TIMEOUT` in apigate and `KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT` in kong (default aiohttp 15 s is too short across k6 profile transitions). |
+| `UPSTREAM_CONNECT_TIMEOUT`  | `3.0`                           | Data upstream connect (s).                       |
+| `UPSTREAM_TOTAL_TIMEOUT`    | `10.0`                          | Data upstream total (s).                         |
+| `AUTH_CONNECT_TIMEOUT`      | `1.0`                           | Auth upstream connect (s) — tighter than data.   |
+| `AUTH_TOTAL_TIMEOUT`        | `3.0`                           | Auth upstream total (s).                         |
 
 ## Run
 
@@ -79,9 +81,11 @@ python -m mypy apigate_bench
   requests. Decoders are typed, so invalid bodies fail as `ValidationError`
   and become `400` without ever producing a Python dict.
 - **One shared `aiohttp.ClientSession`.** Created during ASGI
-  `lifespan.startup`, closed on shutdown. Unlimited connection pool
-  (`limit=0`, `limit_per_host=0`) so the connector never becomes the
-  bottleneck. DNS is cached.
+  `lifespan.startup`, closed on shutdown. `limit=0` (unlimited total),
+  `limit_per_host=256` (FD blow-up guard under bursts), `keepalive_timeout=120s`
+  (matches the other gateways' upstream pool idle), and `enable_cleanup_closed=True`
+  reaps half-closed sockets the kernel marks under bursty ramps.
+  DNS is cached.
 - **Transparent-proxy flags.** `auto_decompress=False` (otherwise we would
   have to re-encode and lie about `content-encoding`/`content-length`).
   `raise_for_status=False` (upstream 4xx/5xx flow to the client verbatim).
@@ -105,3 +109,8 @@ python -m mypy apigate_bench
 - **Granian `--runtime-mode st`.** Single-threaded-per-worker runtime,
   `--workers $(nproc)` gives process-level parallelism. Matches Kong's
   `worker_processes=auto` and tokio's default multi-thread runtime.
+- **Granian `--backlog 4096`.** `listen(2)` backlog passed to each
+  reuseport listener. Granian additionally derives an in-flight cap
+  `backpressure = backlog / workers = 1024 per worker` (≈ 4096 cumulative
+  on a 4-core host) — that's the practical concurrency limit, not the
+  raw accept queue size. Kernel still clamps to `net.core.somaxconn`.

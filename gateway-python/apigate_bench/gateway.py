@@ -60,14 +60,19 @@ def _build_session() -> aiohttp.ClientSession:
     # force us to re-encode and lie about content-encoding/length to the client.
     # raise_for_status=False — upstream 4xx/5xx are forwarded to the client
     # verbatim, not turned into aiohttp exceptions.
+    # keepalive_timeout — keep idle pooled sockets alive across k6 profile
+    # phases; default 15s is too short.
+    # enable_cleanup_closed — reaper for sockets the kernel has half-closed
+    # under bursty ramps; without it FDs leak until the next gc cycle.
     return aiohttp.ClientSession(
         timeout=_build_upstream_timeout(),
         connector=aiohttp.TCPConnector(
             limit=settings.AIOHTTP_CONNECTOR_LIMIT,
-            limit_per_host=0,
+            limit_per_host=settings.AIOHTTP_LIMIT_PER_HOST,
+            keepalive_timeout=settings.AIOHTTP_KEEPALIVE_TIMEOUT,
             use_dns_cache=True,
             ttl_dns_cache=settings.AIOHTTP_DNS_TTL,
-            enable_cleanup_closed=False,
+            enable_cleanup_closed=True,
         ),
         auto_decompress=False,
         raise_for_status=False,

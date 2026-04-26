@@ -9,6 +9,7 @@ exec granian \
   --host 127.0.0.1 \
   --port 8000 \
   --workers "$WORKERS" \
+  --backlog 4096 \
   --runtime-mode st \
   --loop rloop \
   apigate_bench.gateway:app
