@@ -44,7 +44,9 @@ Error envelope is always `{"error": "<message>"}`.
 
 1. Read `Authorization`; missing → `401`.
 2. `POST http://auth:8001/verify` via `resty.http` with `request_uri`, using
-   per-worker keepalive (`keepalive_pool=100`, `keepalive_timeout=60s`).
+   per-worker keepalive (`keepalive_pool=256`, `keepalive_timeout=120s` —
+   aligned with the upstream→data nginx pool and with the auth-side pools
+   in apigate/python).
 3. Any transport failure → `401`; any non-2xx → `401` (collapsed so
    upstream status never leaks).
 4. Decode `{user_id, email}` with `cjson.safe` (non-throwing); malformed
@@ -83,12 +85,14 @@ Set in the root `docker-compose.yml` under the `gateway-kong` service:
 |--------------------------------------------|-----------|-------------------------------------------------|
 | `KONG_DATABASE`                            | `off`     | DB-less mode, declarative config only.          |
 | `KONG_DECLARATIVE_CONFIG`                  | `/kong/kong.yml` | Mounted read-only from this folder.      |
-| `KONG_PROXY_LISTEN`                        | `0.0.0.0:8080` | Remapped to host `:8090` by compose.       |
+| `KONG_PROXY_LISTEN`                        | `0.0.0.0:8080 backlog=1024 reuseport` | Remapped to host `:8090` by compose. `backlog=1024` raises `listen(2)` accept queue from nginx's default 511; `reuseport` gives every worker its own queue and accept-balances at kernel level. Kernel still clamps to `net.core.somaxconn`. |
 | `KONG_PROXY_ACCESS_LOG`                    | `off`     | No per-request JSON logging to stdout.          |
 | `KONG_ADMIN_ACCESS_LOG`                    | `off`     |                                                 |
-| `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE`        | `512`     | Nginx upstream pool size per worker to data.    |
-| `KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS`     | `10000`   | Recycle connection after N requests.            |
-| `KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`     | `60`      | Seconds; matches our auth-side pool.            |
+| `KONG_NGINX_HTTP_WORKER_CONNECTIONS`       | `16384`   | Per-worker connection cap. Lifts nginx's 1024 default — at 4 workers × 1024 we run out of slots well before saturating CPU. |
+| `KONG_NGINX_PROXY_TCP_NODELAY`             | `on`      | Disable Nagle on upstream sockets — the four routes carry small JSON, Nagle's 40 ms cork would dominate latency. |
+| `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE`        | `512`     | Nginx upstream pool size per worker to data (≈ 2048 cumulative on a 4-core host). |
+| `KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS`     | `10000`   | Recycle connection after N requests; high enough not to age out mid-ramp. |
+| `KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`     | `120`     | Seconds — aligned with apigate `POOL_IDLE_TIMEOUT` and python `AIOHTTP_KEEPALIVE_TIMEOUT` so the three gateways share the same pool aging behaviour. |
 | `KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES`      | `require_auth,transforms` | Whitelist the two local modules for the sandboxed `pre-function` plugin. |
 | `LD_PRELOAD`                               | `libjemalloc.so.2` | Set by the Dockerfile.                 |
 

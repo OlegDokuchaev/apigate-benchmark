@@ -18,9 +18,13 @@ local AUTH_URL = "http://auth:8001/verify"
 local VERIFY_TIMEOUT_MS = 3000
 
 -- Per-nginx-worker keepalive pool to auth-service. Without this each
--- /my-items opens a fresh TCP+TLS(-less) connection.
-local KEEPALIVE_TIMEOUT_MS = 60000
-local KEEPALIVE_POOL_SIZE  = 100
+-- /my-items opens a fresh TCP+TLS(-less) connection. Aligned with the
+-- other gateways' upstream pool aging (apigate POOL_IDLE_TIMEOUT=120s,
+-- python AIOHTTP_KEEPALIVE_TIMEOUT=120s) and with the upstream→data pool
+-- (KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT=120s) so all gateway↔upstream
+-- hops share the same idle behaviour.
+local KEEPALIVE_TIMEOUT_MS = 120000
+local KEEPALIVE_POOL_SIZE  = 256
 
 -- verify POSTs the Authorization header to auth-service.
 -- We use request_uri (not connect + request + read_body) because it reads
