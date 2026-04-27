@@ -35,7 +35,7 @@ All via env vars. Defaults are in `.env`; compose overrides with `.env.docker`.
 | `CONNECT_TIMEOUT`   | `3s`                     | TCP connect timeout for data / auth.            |
 | `VERIFY_TIMEOUT`    | `3s`                     | Total budget for `POST /verify`. Sized well under `REQUEST_TIMEOUT` so auth failure does not consume the whole request budget. |
 | `POOL_IDLE_TIMEOUT` | `120s`                   | How long idle upstream sockets stay in the hyper / reqwest pool. Aligned with the same setting in kong (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`) and python (`AIOHTTP_KEEPALIVE_TIMEOUT`) so the three gateways are compared at the same pool aging. |
-| `DATA_POOL_MAX_IDLE_PER_HOST` | `1024`         | Cap on idle hyper-util connections to `data-service`. Default in `UpstreamConfig` is `usize::MAX` (unbounded), which lets the idle pool blow up FDs under bursty ramp profiles. 1024 sits between cumulative kong (~2048) and python (~1024) capacity. Requires `apigate ≥ 0.2.5` (`UpstreamConfig::pool_max_idle_per_host`). |
+| `DATA_POOL_MAX_IDLE_PER_HOST` | `2048`         | Cap on idle hyper-util connections to `data-service`. Default in `UpstreamConfig` is `usize::MAX` (unbounded), which lets the idle pool blow up FDs under bursty ramp profiles. 2048 matches cumulative kong (4 workers × 512) and python (4 workers × 512) capacity, so the three gateways enter ramp burst with the same upstream-pool budget. Requires `apigate ≥ 0.2.5` (`UpstreamConfig::pool_max_idle_per_host`) and host `ulimit -n ≥ 65536` so the single tokio process can hold 2048 idle + inbound + inflight FDs without hitting ENOBUFS. |
 | `LISTEN_BACKLOG`    | `4096`                   | `listen(2)` backlog passed to `apigate::ServeConfig::backlog`. Matches cumulative reuseport capacity of kong / python on a 4-core host. Kernel still clamps to `net.core.somaxconn` — raise that on the host too. Requires `apigate ≥ 0.2.6` (`ServeConfig`/`run_with`). |
 
 Timeouts use [`humantime`](https://docs.rs/humantime) syntax (`10s`, `500ms`).
@@ -100,10 +100,13 @@ Compose from the repo root brings this up alongside `auth-service`,
   (~80–150 B), Nagle's 40 ms cork would dominate latency. The upstream
   side (gateway → data) already has `TCP_NODELAY` from `UpstreamConfig`'s
   default.
-- **Bounded upstream idle pool.** `UpstreamConfig::pool_max_idle_per_host(1024)`.
+- **Bounded upstream idle pool.** `UpstreamConfig::pool_max_idle_per_host(2048)`.
   Default is `usize::MAX` — under k6 ramping the idle pool would grow
-  without bound (FD blow-up + GC churn). 1024 mirrors what cumulative
-  reuseport capacity gives kong / python on the same host.
+  without bound (FD blow-up + GC churn). 2048 mirrors what cumulative
+  reuseport capacity gives kong (4 × 512) / python (4 × 512) on the same
+  host. With `ulimit -n=65536` (see root README's "Host requirements")
+  the single tokio process holds 2048 idle + ~256 auth + a few hundred
+  inbound + ~50 misc — well under the limit.
 - **`SO_KEEPALIVE` override on the upstream connector.** apigate sets the
   TCP keepalive idle to `pool_idle_timeout` (= 120s here). We override to
   30s through `configure_connector(|c| c.set_keepalive(...))` so the kernel
