@@ -21,6 +21,10 @@ services:
     depends_on:
       - auth
       - data
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   gateway-kong:
     build: ./gateway-kong
@@ -60,6 +64,10 @@ services:
     depends_on:
       - auth
       - data
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   gateway-python:
     build: ./gateway-python
@@ -71,6 +79,10 @@ services:
     depends_on:
       - auth
       - data
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   cadvisor:
     image: ghcr.io/google/cadvisor:0.56.2
