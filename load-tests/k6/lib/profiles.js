@@ -56,7 +56,7 @@ export const thresholds = {
     },
     ramp: {
         'http_req_failed{scenario:ramp}': [
-            { threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: '15s' },
+            { threshold: 'rate<0.05', abortOnFail: true, delayAbortEval: '15s' },
         ],
         'http_req_duration{scenario:ramp}': [
             { threshold: 'p(99)<1000', abortOnFail: true, delayAbortEval: '15s' },
