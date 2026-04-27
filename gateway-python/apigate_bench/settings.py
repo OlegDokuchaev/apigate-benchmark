@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # default), but on bursty ramps it pays to bound it explicitly so the
     # event loop doesn't spin up an unbounded number of FDs and blow past
     # the soft `ulimit -n`.
-    AIOHTTP_LIMIT_PER_HOST: int = 256
+    AIOHTTP_LIMIT_PER_HOST: int = 512
     AIOHTTP_DNS_TTL: int = 300
     # How long aiohttp keeps idle keep-alive connections in the pool. Default
     # is 15s — too short for k6 profile transitions (steady → pause → ramp);
