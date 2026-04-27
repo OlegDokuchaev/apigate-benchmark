@@ -20,21 +20,21 @@ export const profiles = {
         executor: 'ramping-arrival-rate',
         startRate: intEnv('RAMP_START', 0),
         timeUnit: '1s',
-        preAllocatedVUs: intEnv('RAMP_VUS', 1500),
-        maxVUs: intEnv('RAMP_MAX_VUS', 6000),
+        preAllocatedVUs: intEnv('RAMP_VUS', 2000),
+        maxVUs: intEnv('RAMP_MAX_VUS', 12000),
         stages: [
-            { duration: __ENV.RAMP_DURATION || '5m', target: intEnv('RAMP_END', 10000) },
+            { duration: __ENV.RAMP_DURATION || '5m', target: intEnv('RAMP_END', 20000) },
         ],
     }),
 
-    // Stress: well above the expected ceiling — observe how the gateway degrades.
+    // Stress: above the expected ceiling — observe how the gateway degrades.
     stress: () => ({
         executor: 'constant-arrival-rate',
-        rate: intEnv('STRESS_RPS', 8000),
+        rate: intEnv('STRESS_RPS', 12000),
         timeUnit: '1s',
-        duration: __ENV.STRESS_DURATION || '1m',
-        preAllocatedVUs: intEnv('STRESS_VUS', 2000),
-        maxVUs: intEnv('STRESS_MAX_VUS', 8000),
+        duration: __ENV.STRESS_DURATION || '2m',
+        preAllocatedVUs: intEnv('STRESS_VUS', 3000),
+        maxVUs: intEnv('STRESS_MAX_VUS', 12000),
     }),
 };
 
@@ -44,9 +44,7 @@ export const profileNames = Object.keys(profiles);
 // (e.g. /register + /login for my-items) don't dilute the main load metric.
 // Scenario name matches PROFILE because options.scenarios is keyed by PROFILE.
 //   steady — soft floor: fail the run if >1 % errored (no abort, just exit code).
-//   ramp   — hard abort on either signal: p99 > 1 s or failure rate > 5 %.
-//            delayAbortEval skips the first 15 s so connection-setup spikes
-//            don't trip either threshold prematurely.
+//   ramp   — soft thresholds: p99 > 3 s or failure rate > 10 %.
 //   stress — no thresholds; we want to observe degradation, not assert it.
 export const thresholds = {
     steady: {
