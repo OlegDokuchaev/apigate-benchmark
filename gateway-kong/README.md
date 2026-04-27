@@ -88,7 +88,7 @@ Set in the root `docker-compose.yml` under the `gateway-kong` service:
 | `KONG_PROXY_LISTEN`                        | `0.0.0.0:8080 backlog=1024 reuseport` | Remapped to host `:8090` by compose. `backlog=1024` raises `listen(2)` accept queue from nginx's default 511; `reuseport` gives every worker its own queue and accept-balances at kernel level. Kernel still clamps to `net.core.somaxconn`. |
 | `KONG_PROXY_ACCESS_LOG`                    | `off`     | No per-request JSON logging to stdout.          |
 | `KONG_ADMIN_ACCESS_LOG`                    | `off`     |                                                 |
-| `KONG_NGINX_HTTP_WORKER_CONNECTIONS`       | `16384`   | Per-worker connection cap. Lifts nginx's 1024 default — at 4 workers × 1024 we run out of slots well before saturating CPU. |
+| `KONG_NGINX_EVENTS_WORKER_CONNECTIONS`     | `16384`   | Per-worker connection cap. Lifts nginx's 1024 default — at 4 workers × 1024 we run out of slots well before saturating CPU. Must live in the `events {}` block, hence `_EVENTS_` (not `_HTTP_`). |
 | `KONG_NGINX_PROXY_TCP_NODELAY`             | `on`      | Disable Nagle on upstream sockets — the four routes carry small JSON, Nagle's 40 ms cork would dominate latency. |
 | `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE`        | `512`     | Nginx upstream pool size per worker to data (≈ 2048 cumulative on a 4-core host). |
 | `KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS`     | `10000`   | Recycle connection after N requests; high enough not to age out mid-ramp. |
