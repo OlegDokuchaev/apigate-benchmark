@@ -40,7 +40,7 @@ Defaults live in `.env.example`. In Docker, values come from compose env.
 | `AUTH_VERIFY_URL`           | `http://127.0.0.1:8001/verify`  | Full URL of `auth-service` /verify.              |
 | `MAX_BODY_BYTES`            | `1048576`                       | Buffer limit for buffered endpoints.             |
 | `AIOHTTP_CONNECTOR_LIMIT`   | `0`                             | `TCPConnector` total pool limit (`0` = unlimited). |
-| `AIOHTTP_LIMIT_PER_HOST`    | `256`                           | Per-host idle pool cap — bounds the FD blow-up on bursty ramps even when `AIOHTTP_CONNECTOR_LIMIT=0`. |
+| `AIOHTTP_LIMIT_PER_HOST`    | `512`                           | Per-host idle pool cap — bounds the FD blow-up on bursty ramps even when `AIOHTTP_CONNECTOR_LIMIT=0`. 512 per worker × 4 workers = 2048 cumulative, matched with `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE` and apigate's `DATA_POOL_MAX_IDLE_PER_HOST` so the three gateways are compared at the same upstream-pool budget. |
 | `AIOHTTP_DNS_TTL`           | `300`                           | aiohttp DNS cache TTL (s).                       |
 | `AIOHTTP_KEEPALIVE_TIMEOUT` | `120.0`                         | How long aiohttp keeps idle keep-alive sockets in the pool. Aligned with `POOL_IDLE_TIMEOUT` in apigate and `KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT` in kong (default aiohttp 15 s is too short across k6 profile transitions). |
 | `UPSTREAM_CONNECT_TIMEOUT`  | `3.0`                           | Data upstream connect (s).                       |
@@ -82,7 +82,8 @@ python -m mypy apigate_bench
   and become `400` without ever producing a Python dict.
 - **One shared `aiohttp.ClientSession`.** Created during ASGI
   `lifespan.startup`, closed on shutdown. `limit=0` (unlimited total),
-  `limit_per_host=256` (FD blow-up guard under bursts), `keepalive_timeout=120s`
+  `limit_per_host=512` (FD blow-up guard under bursts; 512 × 4 workers =
+  2048 cumulative, matches kong / apigate), `keepalive_timeout=120s`
   (matches the other gateways' upstream pool idle), and `enable_cleanup_closed=True`
   reaps half-closed sockets the kernel marks under bursty ramps.
   DNS is cached.
