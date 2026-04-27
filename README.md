@@ -191,7 +191,7 @@ the cumulative-capacity column where the runtime uses SO_REUSEPORT.
 | **Effective in-flight cap**  | FD-bound (no app-level cap)                     | `worker_connections=16384` per worker                 | granian `backpressure = backlog/workers = 1024` per worker → **4096 cumulative** |
 | Inbound TCP_NODELAY          | ✓ (`ServeConfig::tcp_nodelay(true)`)            | nginx default `tcp_nodelay on`                        | granian default                                       |
 | **Upstream pool idle**       | 120 s (`pool_idle_timeout`)                     | 120 s (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`)        | 120 s (`AIOHTTP_KEEPALIVE_TIMEOUT`)                   |
-| Upstream pool size (per worker / cumulative) | 1024 (proxy, single shared pool) / 256 (auth_client) | 512 / 4 × 512 = 2048             | 256 (`limit_per_host`) / 4 × 256 = 1024            |
+| Upstream pool size (per worker / cumulative) | 2048 (proxy, single shared pool) / 256 (auth_client) | 512 / 4 × 512 = 2048             | 512 (`limit_per_host`) / 4 × 512 = 2048            |
 | Upstream connect timeout     | 3 s (proxy) / 3 s (auth)                        | 3 s (`connect_timeout` in `kong.yml`)                 | 3 s (`UPSTREAM_CONNECT_TIMEOUT`) / 1 s (`AUTH_CONNECT_TIMEOUT`) |
 | Upstream total timeout       | 10 s (proxy) / 3 s (auth)                       | 10 s (`read_timeout` / `write_timeout`)               | 10 s / 3 s                                             |
 | Upstream HTTP version        | HTTP/1.1 only                                   | HTTP/1.1 (`protocol: http`)                           | HTTP/1.1 (aiohttp default)                            |
@@ -213,21 +213,88 @@ numbers.
 
 ### Host requirements
 
-`net.core.somaxconn ≥ 4096` is required for the listen-backlog tuning
-above to take effect — kernels otherwise silently clamp every gateway's
-backlog to the lower value, undoing the configuration. Modern Linux
-distros (Ubuntu 24.04, Debian 12, RHEL 9 — kernel ≥ 5.4) ship 4096 by
-default; older kernels still default to 128. Check with
-`sysctl net.core.somaxconn`. To raise it persistently:
+The matrix above (cumulative pool 2048 per upstream, listen backlog 4096,
+`worker_connections 16384` on Kong) is calibrated for a 4 vCPU / ≥ 8 GiB
+Linux benchmark host. Three host-level knobs **must** be set, otherwise
+the kernel silently clamps every gateway's tuning down and the comparison
+becomes meaningless.
+
+#### File descriptors — `ulimit -n ≥ 65536`
+
+Every concurrent upstream socket, every inbound k6 connection, every
+keep-alive idle slot — all share one per-process FD table. apigate is
+the binding case: a single tokio process holds ~2048 idle data + 256 idle
+auth + a few hundred in-flight + a few hundred inbound under steady state,
+and k6's `RAMP_MAX_VUS=6000` can briefly multiply inbound at the saturation
+point. The default soft limit on most distros is 1024 — apigate hits
+`EMFILE` (gateway returns 502s) well before reaching real saturation.
+
+`docker-compose.yml` already pins `ulimits.nofile = 65536` on every
+gateway service. For native runs (`cargo run --release`,
+`./scripts/run.sh`, etc.) raise the host-level limit too:
 
 ```bash
-echo 'net.core.somaxconn = 4096' | sudo tee /etc/sysctl.d/99-bench.conf
+# /etc/security/limits.d/99-bench.conf
+*  soft  nofile  65536
+*  hard  nofile  65536
+# applies on next login; verify with `ulimit -n`
+```
+
+Kong/granian split FDs across 4 worker processes, so each worker's budget
+is 4× smaller — 65536 is overkill for them but harmless.
+
+#### Listen backlog — `net.core.somaxconn ≥ 8192`
+
+apigate sets `LISTEN_BACKLOG=4096`, granian gets `--backlog 4096`, Kong
+declares `backlog=1024 reuseport` × 4 = 4096 cumulative. The kernel
+clamps **every** `listen()` call to `somaxconn` regardless of what the
+application requests — if it stays at 128/4096, the configuration above
+is silently truncated. Set 8192 to leave a clear margin over the highest
+configured backlog.
+
+#### Ephemeral ports + TIME_WAIT — gateway → upstream egress
+
+The gateway opens new TCP connections to `auth:8001` / `data:8002` whenever
+the keep-alive pool is exhausted. Each closed connection sits in
+`TIME_WAIT` for ~60 s, holding an ephemeral port. Under a 5-minute ramp at
+10k RPS the gateway can burn through the default port range
+(`32768–60999`, ~28 k ports) faster than they free. Symptom: bimodal
+latency tail and `EADDRNOTAVAIL` in gateway logs.
+
+#### Recommended sysctl set
+
+```bash
+sudo tee /etc/sysctl.d/99-bench.conf <<'EOF'
+# Listen backlog cap. Must be ≥ the highest LISTEN_BACKLOG /
+# KONG_PROXY_LISTEN backlog / granian --backlog used in this repo.
+net.core.somaxconn = 8192
+
+# Half-open SYN queue. Default 1024 is tight under k6 ramping bursts.
+net.ipv4.tcp_max_syn_backlog = 8192
+
+# Per-CPU softirq packet backlog. Default 1000; raise for sustained 10k RPS.
+net.core.netdev_max_backlog = 5000
+
+# Egress port pool. Default 32768–60999 gives ~28k ports; 10000–65535 ≈ 55k.
+net.ipv4.ip_local_port_range = 10000 65535
+
+# Reuse TIME_WAIT sockets for new outgoing connections. Safe on a private
+# benchmark network; revisit on internet-facing hosts.
+net.ipv4.tcp_tw_reuse = 1
+EOF
 sudo sysctl --system
 ```
 
-For TIME_WAIT-heavy gateway → upstream traffic on a long benchmark, also
-consider `net.ipv4.tcp_tw_reuse=1` and
-`net.ipv4.ip_local_port_range="10000 65535"`.
+Verify after applying: `sysctl net.core.somaxconn net.ipv4.ip_local_port_range`.
+
+#### Quick sanity check before running the matrix
+
+```bash
+ulimit -n                              # ≥ 65536
+sysctl net.core.somaxconn              # ≥ 8192
+docker compose ps                      # one gateway up at a time
+docker compose exec gateway-apigate sh -c 'ulimit -n'  # ≥ 65536 inside container
+```
 
 ### Kong-specific notes
 
@@ -252,6 +319,11 @@ head-to-head:
 - Per-container CPU / memory / network are pulled from
   [cAdvisor](https://github.com/google/cadvisor) after each run — see
   [`load-tests/README.md`](load-tests/README.md).
+
+Latest matrix run on 4 vCPU / 10 GiB Linux is summarised in
+[`load-tests/RESULTS.md`](load-tests/RESULTS.md). Headline (steady, 2500 RPS):
+apigate p99 1.3–3.6 ms / 34–57 % CPU / 70 MiB; kong 2.5–10 ms / 45–82 % CPU / 530 MiB;
+python 9–104 ms / 104–163 % CPU / 200 MiB. See `RESULTS.md` for ramp and stress.
 
 Run one gateway at a time — stop the others so they don't share CPU:
 
