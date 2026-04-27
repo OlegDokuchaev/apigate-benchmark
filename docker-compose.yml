@@ -40,7 +40,7 @@ services:
       KONG_LOG_LEVEL: notice
       # Lift nginx's per-worker connection cap from the 1024 default — at
       # 4 workers × 1024 we run out of slots well before saturating CPU.
-      KONG_NGINX_HTTP_WORKER_CONNECTIONS: "16384"
+      KONG_NGINX_EVENTS_WORKER_CONNECTIONS: "16384"
       # TCP_NODELAY on upstream sockets — the 4 routes carry small JSON,
       # Nagle's 40ms cork would dominate latency.
       KONG_NGINX_PROXY_TCP_NODELAY: "on"
