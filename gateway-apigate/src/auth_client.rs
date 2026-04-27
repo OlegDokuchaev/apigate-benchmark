@@ -17,23 +17,21 @@ pub struct AuthClient {
 }
 
 impl AuthClient {
-    pub fn new(auth_backend: &str, timeout: Duration) -> anyhow::Result<Self> {
-        // Build a pooled client used for every /verify on the hot path.
-        // - .no_proxy() skips HTTP(S)_PROXY autodetection: the hop is internal
-        //   and we never want it to leak through a caller's proxy env.
-        // - tcp_keepalive keeps pooled sockets alive between k6 profile phases
-        //   (steady → pause → ramp → pause → stress); without it the idle pool
-        //   tears down and the next wave pays the full TCP handshake.
-        // - timeout is the *total* request budget (connect + send + read).
+    pub fn new(
+        auth_backend: &str,
+        timeout: Duration,
+        pool_idle_timeout: Duration,
+    ) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(timeout)
             .tcp_keepalive(Duration::from_secs(15))
+            .tcp_nodelay(true)
+            .http1_only()
+            .pool_idle_timeout(pool_idle_timeout)
+            .pool_max_idle_per_host(256)
             .no_proxy()
             .build()?;
-        // Parse the verify URL once at startup, not once per request — reqwest's
-        // IntoUrl re-parses every &str/String argument passed to .post().
-        let verify_url =
-            Url::parse(&format!("{}/verify", auth_backend.trim_end_matches('/')))?;
+        let verify_url = Url::parse(&format!("{}/verify", auth_backend.trim_end_matches('/')))?;
         Ok(Self { http, verify_url })
     }
 

@@ -6,7 +6,7 @@ All three implementations expose the same four-route contract over the same
 pair of backends — `auth-service` and `data-service` — so the numbers
 measure the gateway, not the surrounding code. Driven by a k6 matrix.
 
-- **gateway-apigate** — Rust on [apigate](https://github.com/OlegDokuchaev/apigate) 0.2.4 (subject of the benchmark).
+- **gateway-apigate** — Rust on [apigate](https://github.com/OlegDokuchaev/apigate) 0.2.6 (subject of the benchmark).
 - **gateway-kong** — Kong OSS 3.7 in DB-less mode, logic in a `pre-function` Lua plugin.
 - **gateway-python** — Granian + rloop + msgspec + aiohttp on bare ASGI.
 
@@ -37,7 +37,7 @@ client ──JWT──▶ │ gateway-apigate    │ ───┐
 |--------------------------------------------------|----------------------------------------------|--------------|----------------------------------------------|
 | [`auth-service/`](auth-service/README.md)        | Go, fasthttp + JWT HS256 + bcrypt            | 8001         | `/register`, `/login`, `/verify` (token → id) |
 | [`data-service/`](data-service/README.md)        | Go, fasthttp                                 | 8002         | Product catalogue; trusts `x-user-id`        |
-| [`gateway-apigate/`](gateway-apigate/README.md)  | Rust, apigate 0.2.4                          | 8080         | Reverse proxy with `before` hook, `json`, `map` |
+| [`gateway-apigate/`](gateway-apigate/README.md)  | Rust, apigate 0.2.6                          | 8080         | Reverse proxy with `before` hook, `json`, `map` |
 | [`gateway-kong/`](gateway-kong/README.md)        | Kong 3.7 (DB-less) + Lua (`pre-function`)    | 8090 / 8091  | Same contract via Kong declarative config    |
 | [`gateway-python/`](gateway-python/README.md)    | Granian + rloop + msgspec + aiohttp (ASGI)   | 8092         | Same contract on bare Python ASGI            |
 
@@ -174,9 +174,69 @@ benchmark compares **implementations**, not runtime defaults:
   (see each Dockerfile). The default glibc `ptmalloc` scales poorly on
   the hot path once worker count crosses ~14; mimalloc/jemalloc win
   5–15 % and stay more stable under soak load.
-- **Kong tuning in compose.** Access log off, upstream-keepalive pool
-  raised to 512, `require_auth` / `transforms` whitelisted as the only
-  modules the Lua `pre-function` sandbox may `require()`.
+
+### Tuning matrix
+
+The settings below are kept aligned across all three implementations so
+the benchmark compares the gateway code, not the surrounding configuration.
+Numbers assume a 4 vCPU host; per-worker columns are multiplied by 4 in
+the cumulative-capacity column where the runtime uses SO_REUSEPORT.
+
+| Aspect                       | apigate                                         | kong                                                  | python (granian)                                      |
+|------------------------------|-------------------------------------------------|-------------------------------------------------------|-------------------------------------------------------|
+| Workers                      | 4 (tokio multi-thread, `available_parallelism()`) | 4 (`worker_processes auto`)                          | 4 (`--workers $(nproc)`)                              |
+| Threading model              | shared async runtime, work-stealing             | per-worker event loop                                 | per-worker single-thread (`--runtime-mode st`)        |
+| Allocator                    | mimalloc                                        | jemalloc (`LD_PRELOAD`)                               | jemalloc (`LD_PRELOAD`)                               |
+| **Listen backlog**           | 4096 (single queue, no SO_REUSEPORT)            | 1024 per worker × 4 = **4096 cumulative** (`reuseport`) | `--backlog 4096` per reuseport listener × 4 = 16384 cumulative listen capacity |
+| **Effective in-flight cap**  | FD-bound (no app-level cap)                     | `worker_connections=16384` per worker                 | granian `backpressure = backlog/workers = 1024` per worker → **4096 cumulative** |
+| Inbound TCP_NODELAY          | ✓ (`ServeConfig::tcp_nodelay(true)`)            | nginx default `tcp_nodelay on`                        | granian default                                       |
+| **Upstream pool idle**       | 120 s (`pool_idle_timeout`)                     | 120 s (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`)        | 120 s (`AIOHTTP_KEEPALIVE_TIMEOUT`)                   |
+| Upstream pool size (per worker / cumulative) | 1024 (proxy, single shared pool) / 256 (auth_client) | 512 / 4 × 512 = 2048             | 256 (`limit_per_host`) / 4 × 256 = 1024            |
+| Upstream connect timeout     | 3 s (proxy) / 3 s (auth)                        | 3 s (`connect_timeout` in `kong.yml`)                 | 3 s (`UPSTREAM_CONNECT_TIMEOUT`) / 1 s (`AUTH_CONNECT_TIMEOUT`) |
+| Upstream total timeout       | 10 s (proxy) / 3 s (auth)                       | 10 s (`read_timeout` / `write_timeout`)               | 10 s / 3 s                                             |
+| Upstream HTTP version        | HTTP/1.1 only                                   | HTTP/1.1 (`protocol: http`)                           | HTTP/1.1 (aiohttp default)                            |
+| Upstream TCP_NODELAY         | ✓ (`set_nodelay(true)` on client)               | ✓ (`KONG_NGINX_PROXY_TCP_NODELAY=on`)                 | aiohttp default                                       |
+
+Backend services (`auth-service`, `data-service`) are aligned too:
+`fasthttp.Server { ReadTimeout: 10s, WriteTimeout: 10s, IdleTimeout: 120s,
+TCPKeepalive: true, TCPKeepalivePeriod: 30s }` — `IdleTimeout: 120s`
+matches every gateway's upstream pool idle timeout so neither side closes
+keep-alive sockets first.
+
+The intentional asymmetry is **how concurrent in-flight requests are
+capped** — apigate has a single 4096-slot accept queue and no app-level
+cap; kong reuseports and limits per-worker; granian reuseports and
+additionally throttles in-flight via `backpressure`. The numbers in the
+matrix are picked so that **effective concurrency ≈ 4096** under burst
+load in all three cases — equal real capacity rather than equal config
+numbers.
+
+### Host requirements
+
+`net.core.somaxconn ≥ 4096` is required for the listen-backlog tuning
+above to take effect — kernels otherwise silently clamp every gateway's
+backlog to the lower value, undoing the configuration. Modern Linux
+distros (Ubuntu 24.04, Debian 12, RHEL 9 — kernel ≥ 5.4) ship 4096 by
+default; older kernels still default to 128. Check with
+`sysctl net.core.somaxconn`. To raise it persistently:
+
+```bash
+echo 'net.core.somaxconn = 4096' | sudo tee /etc/sysctl.d/99-bench.conf
+sudo sysctl --system
+```
+
+For TIME_WAIT-heavy gateway → upstream traffic on a long benchmark, also
+consider `net.ipv4.tcp_tw_reuse=1` and
+`net.ipv4.ip_local_port_range="10000 65535"`.
+
+### Kong-specific notes
+
+Beyond the shared tuning above, the Kong service in `docker-compose.yml`
+also disables access log (`KONG_PROXY_ACCESS_LOG=off`), whitelists
+`require_auth` / `transforms` as the only modules the Lua `pre-function`
+sandbox may `require()` (`KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES`), and
+keeps `KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS=10000` so a single keep-alive
+socket is never aged-out mid-ramp on request-count grounds.
 
 ## Load testing
 
@@ -185,7 +245,7 @@ head-to-head:
 
 - **3 profiles × 4 routes = 12 runs per gateway.**
 - Profiles: `steady` (constant-arrival-rate, 2500 RPS × 2 min),
-  `ramp` (0 → 10000 RPS over 5 min), `stress` (12000 RPS × 1 min).
+  `ramp` (0 → 10000 RPS over 5 min), `stress` (8000 RPS × 1 min).
 - All **open-model** (`constant-arrival-rate` / `ramping-arrival-rate`):
   RPS is pinned, so latency reflects gateway state rather than VU-pool
   saturation.

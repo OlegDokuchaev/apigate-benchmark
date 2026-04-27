@@ -10,9 +10,9 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apigate"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff0c812da7ab78f451226b34ed14d499e3deccf22903945670d8b6f0af1b034c"
+checksum = "e46a495138ec250e0f06d753a86fce667b6900509d00535aefe01fec15097dd9"
 dependencies = [
  "apigate-core",
  "apigate-macros",
@@ -24,24 +24,26 @@ dependencies = [
 
 [[package]]
 name = "apigate-core"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df87f1a48a8b8fe47113716fa9004920a7015e780acb9db050bd118a621dbb0d"
+checksum = "b5bf6666abf1a714065e69becf51a6df6306cbf8006deb9b04ccdab6e0d5f744"
 dependencies = [
  "axum",
  "http",
  "hyper-util",
  "smallvec",
+ "socket2",
  "thiserror",
  "tokio",
+ "tracing",
  "xxhash-rust",
 ]
 
 [[package]]
 name = "apigate-macros"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c29a8111f222a337c12d06efe1b230cdcedbbf9dc1dd666e6081c8c59f9d983e"
+checksum = "6b6f590585e43cdc8188092e5e46bcacfeec345d3e4fe54633bb18ad41793df2"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1244,7 +1246,19 @@ checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
  "log",
  "pin-project-lite",
+ "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

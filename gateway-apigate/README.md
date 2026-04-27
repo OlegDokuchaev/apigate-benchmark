@@ -1,12 +1,12 @@
 # gateway-apigate
 
 Reference gateway for the apigate example. Built on
-[`apigate`](https://github.com/OlegDokuchaev/apigate) 0.2.4 — a Rust API
+[`apigate`](https://github.com/OlegDokuchaev/apigate) 0.2.6 — a Rust API
 gateway framework where routes, hooks, body validators, and payload
 rewriters are declared via attribute macros and the runtime wires them into
 an `axum`/`hyper` pipeline.
 
-Stack: Rust 1.88, `apigate` 0.2.4, `tokio` multi-thread runtime, `reqwest` with
+Stack: Rust 1.88, `apigate` 0.2.6, `tokio` multi-thread runtime, `reqwest` with
 `rustls-tls`, `mimalloc` as the global allocator.
 
 ## Routes
@@ -26,14 +26,17 @@ validation vs. body rewrite).
 
 All via env vars. Defaults are in `.env`; compose overrides with `.env.docker`.
 
-| Var               | Example                  | Notes                                           |
-|-------------------|--------------------------|-------------------------------------------------|
-| `LISTEN_ADDR`     | `0.0.0.0:8080`           | `SocketAddr` the gateway binds to.              |
-| `AUTH_BACKEND`    | `http://127.0.0.1:8001`  | Base URL of `auth-service`. `/verify` is joined once at startup. |
-| `DATA_BACKEND`    | `http://127.0.0.1:8002`  | Base URL of `data-service`. Forwarded path stays verbatim. |
-| `REQUEST_TIMEOUT` | `10s`                    | Total budget for the upstream data call.        |
-| `CONNECT_TIMEOUT` | `3s`                     | TCP connect timeout for data / auth.            |
-| `VERIFY_TIMEOUT`  | `3s`                     | Total budget for `POST /verify`. Sized well under `REQUEST_TIMEOUT` so auth failure does not consume the whole request budget. |
+| Var                 | Example                  | Notes                                           |
+|---------------------|--------------------------|-------------------------------------------------|
+| `LISTEN_ADDR`       | `0.0.0.0:8080`           | `SocketAddr` the gateway binds to.              |
+| `AUTH_BACKEND`      | `http://127.0.0.1:8001`  | Base URL of `auth-service`. `/verify` is joined once at startup. |
+| `DATA_BACKEND`      | `http://127.0.0.1:8002`  | Base URL of `data-service`. Forwarded path stays verbatim. |
+| `REQUEST_TIMEOUT`   | `10s`                    | Total budget for the upstream data call.        |
+| `CONNECT_TIMEOUT`   | `3s`                     | TCP connect timeout for data / auth.            |
+| `VERIFY_TIMEOUT`    | `3s`                     | Total budget for `POST /verify`. Sized well under `REQUEST_TIMEOUT` so auth failure does not consume the whole request budget. |
+| `POOL_IDLE_TIMEOUT` | `120s`                   | How long idle upstream sockets stay in the hyper / reqwest pool. Aligned with the same setting in kong (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`) and python (`AIOHTTP_KEEPALIVE_TIMEOUT`) so the three gateways are compared at the same pool aging. |
+| `DATA_POOL_MAX_IDLE_PER_HOST` | `1024`         | Cap on idle hyper-util connections to `data-service`. Default in `UpstreamConfig` is `usize::MAX` (unbounded), which lets the idle pool blow up FDs under bursty ramp profiles. 1024 sits between cumulative kong (~2048) and python (~1024) capacity. Requires `apigate ≥ 0.2.5` (`UpstreamConfig::pool_max_idle_per_host`). |
+| `LISTEN_BACKLOG`    | `4096`                   | `listen(2)` backlog passed to `apigate::ServeConfig::backlog`. Matches cumulative reuseport capacity of kong / python on a 4-core host. Kernel still clamps to `net.core.somaxconn` — raise that on the host too. Requires `apigate ≥ 0.2.6` (`ServeConfig`/`run_with`). |
 
 Timeouts use [`humantime`](https://docs.rs/humantime) syntax (`10s`, `500ms`).
 
@@ -75,7 +78,36 @@ Compose from the repo root brings this up alongside `auth-service`,
     internal and must not be routed through a caller's proxy env.
   - `tcp_keepalive(15s)` keeps pooled sockets alive across k6 profile
     pauses; without it the next wave pays a full TCP handshake per upstream.
+  - `tcp_nodelay(true)` disables Nagle on the auth hop — `/verify` payloads
+    are small (~150 B request, ~80 B reply), Nagle's 40 ms cork would
+    dominate latency.
+  - `http1_only()` pins the wire version. auth-service is Go fasthttp,
+    HTTP/1.1 only — pinning skips ALPN negotiation on every connect.
+  - `pool_idle_timeout(POOL_IDLE_TIMEOUT)` and `pool_max_idle_per_host(256)`
+    keep a hot pool under bursty ramps so the gateway doesn't open a fresh
+    TCP connection (and burn an ephemeral port → TIME_WAIT) per request.
   - All errors (network, non-2xx, bad JSON) collapse to `unauthorized` so
     upstream details never leak into the response.
+- **Listen backlog.** Bound at startup via
+  `apigate::run_with(addr, app, ServeConfig::new().backlog(LISTEN_BACKLOG).tcp_nodelay(true))`.
+  The default OS backlog (128 on older Linux) overflows under k6
+  ramping-arrival-rate workloads, surfacing as ~1 % of requests hanging
+  for the full client-side timeout (bimodal latency). 4096 absorbs typical
+  ramp bursts; kernel still clamps to `net.core.somaxconn`.
+- **Inbound `TCP_NODELAY`.** `ServeConfig::tcp_nodelay(true)` sets the flag
+  on every accepted client socket via axum's `ListenerExt::tap_io`. The
+  default on accepted streams is *off* — the four routes carry small JSON
+  (~80–150 B), Nagle's 40 ms cork would dominate latency. The upstream
+  side (gateway → data) already has `TCP_NODELAY` from `UpstreamConfig`'s
+  default.
+- **Bounded upstream idle pool.** `UpstreamConfig::pool_max_idle_per_host(1024)`.
+  Default is `usize::MAX` — under k6 ramping the idle pool would grow
+  without bound (FD blow-up + GC churn). 1024 mirrors what cumulative
+  reuseport capacity gives kong / python on the same host.
+- **`SO_KEEPALIVE` override on the upstream connector.** apigate sets the
+  TCP keepalive idle to `pool_idle_timeout` (= 120s here). We override to
+  30s through `configure_connector(|c| c.set_keepalive(...))` so the kernel
+  reaps half-closed pooled sockets quickly across k6 profile pauses —
+  same intent as aiohttp `enable_cleanup_closed=True` in gateway-python.
 - **Release profile.** `lto = "thin"`, `codegen-units = 1`, `strip = true` —
   standard Rust perf flags.

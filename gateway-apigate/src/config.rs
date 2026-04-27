@@ -15,6 +15,10 @@ pub struct AppConfig {
     pub connect_timeout: Duration,
     #[serde(with = "humantime_serde")]
     pub verify_timeout: Duration,
+    #[serde(with = "humantime_serde")]
+    pub pool_idle_timeout: Duration,
+    pub data_pool_max_idle_per_host: usize,
+    pub listen_backlog: u32,
 }
 
 impl AppConfig {
