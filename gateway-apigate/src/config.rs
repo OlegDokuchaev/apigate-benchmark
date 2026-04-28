@@ -18,6 +18,7 @@ pub struct AppConfig {
     #[serde(with = "humantime_serde")]
     pub pool_idle_timeout: Duration,
     pub data_pool_max_idle_per_host: usize,
+    pub auth_pool_max_idle_per_host: usize,
     pub listen_backlog: u32,
 }
 

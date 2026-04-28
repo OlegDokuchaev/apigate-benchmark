@@ -17,8 +17,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cfg = AppConfig::load()?;
-    let auth_client =
-        AuthClient::new(&cfg.auth_backend, cfg.verify_timeout, cfg.pool_idle_timeout)?;
+    let auth_client = AuthClient::new(
+        &cfg.auth_backend,
+        cfg.verify_timeout,
+        cfg.pool_idle_timeout,
+        cfg.auth_pool_max_idle_per_host,
+    )?;
 
     let upstream = apigate::UpstreamConfig::default()
         .connect_timeout(cfg.connect_timeout)

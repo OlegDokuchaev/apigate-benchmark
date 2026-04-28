@@ -21,6 +21,7 @@ impl AuthClient {
         auth_backend: &str,
         timeout: Duration,
         pool_idle_timeout: Duration,
+        pool_max_idle_per_host: usize,
     ) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(timeout)
@@ -28,7 +29,7 @@ impl AuthClient {
             .tcp_nodelay(true)
             .http1_only()
             .pool_idle_timeout(pool_idle_timeout)
-            .pool_max_idle_per_host(256)
+            .pool_max_idle_per_host(pool_max_idle_per_host)
             .no_proxy()
             .build()?;
         let verify_url = Url::parse(&format!("{}/verify", auth_backend.trim_end_matches('/')))?;
