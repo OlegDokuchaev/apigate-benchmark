@@ -44,9 +44,12 @@ Error envelope is always `{"error": "<message>"}`.
 
 1. Read `Authorization`; missing → `401`.
 2. `POST http://auth:8001/verify` via `resty.http` with `request_uri`, using
-   per-worker keepalive (`keepalive_pool=256`, `keepalive_timeout=120s` —
-   aligned with the upstream→data nginx pool and with the auth-side pools
-   in apigate/python).
+   per-worker keepalive (`keepalive_pool=512`, `keepalive_timeout=120s` —
+   4 workers × 512 = 2048 cumulative, aligned with the upstream→data nginx
+   pool and with apigate's `AUTH_POOL_MAX_IDLE_PER_HOST=2048` / python's
+   `AIOHTTP_LIMIT_PER_HOST=512` × 4 workers). The constant is hardcoded in
+   `lua/require_auth.lua` because the `pre-function` Lua sandbox does not
+   expose `os.getenv`; tune by editing that file and reloading the gateway.
 3. Any transport failure → `401`; any non-2xx → `401` (collapsed so
    upstream status never leaks).
 4. Decode `{user_id, email}` with `cjson.safe` (non-throwing); malformed

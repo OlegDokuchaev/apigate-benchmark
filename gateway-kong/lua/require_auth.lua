@@ -23,8 +23,17 @@ local VERIFY_TIMEOUT_MS = 3000
 -- python AIOHTTP_KEEPALIVE_TIMEOUT=120s) and with the upstream→data pool
 -- (KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT=120s) so all gateway↔upstream
 -- hops share the same idle behaviour.
+--
+-- Pool size is per-worker. With 4 nginx workers (worker_processes=auto on
+-- a 4-vCPU host) the cumulative idle pool to auth is 4 × 512 = 2048,
+-- matched with apigate's AUTH_POOL_MAX_IDLE_PER_HOST and python's
+-- AIOHTTP_LIMIT_PER_HOST × workers. Under ramp the auth-side burst can
+-- briefly push concurrent /verify calls past 1k, and the previous 256
+-- value forced a TCP handshake + TIME_WAIT close on every excess request.
+-- The Kong pre-function sandbox does not expose `os.getenv`, so this
+-- value is set at module-load time; tune by editing the constant.
 local KEEPALIVE_TIMEOUT_MS = 120000
-local KEEPALIVE_POOL_SIZE  = 256
+local KEEPALIVE_POOL_SIZE  = 512
 
 -- verify POSTs the Authorization header to auth-service.
 -- We use request_uri (not connect + request + read_body) because it reads
