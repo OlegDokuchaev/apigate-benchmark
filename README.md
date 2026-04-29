@@ -76,6 +76,7 @@ Latest headline:
 | steady, 2500 RPS | apigate p99 is 33-144% faster than APISIX, 52-391% faster than Kong, 317-3857% faster than Python depending on route |
 | ramp, 0 -> 20000 RPS | apigate delivered 6-31% more avg RPS than APISIX, 1-41% more than Kong, 115-184% more than Python |
 | stress, 9000 RPS | apigate p99 is 7-70% faster than APISIX, 32-159% faster than Kong, and orders of magnitude faster than Python on saturated routes |
+| direct data baseline | `data-service` reaches ~19.4-19.8k peak RPS in ramp with p99 under 56 ms; it is not the primary ramp bottleneck for `items`, `search`, or `lookup` |
 
 Run matrix:
 
@@ -95,6 +96,17 @@ docker compose stop gateway-apisix
 docker compose up -d gateway-python
 ./load-tests/run.sh python http://localhost:8092
 ```
+
+Direct data-service baseline:
+
+```bash
+docker compose up -d data cadvisor
+./load-tests/run.sh data
+```
+
+Use it to separate a `data-service` throughput ceiling from a gateway ceiling.
+In direct mode, `/my-items` sends internal identity headers and `/lookup` sends
+the already-rewritten internal body.
 
 ## Fairness Knobs
 
@@ -132,5 +144,6 @@ net.ipv4.tcp_tw_reuse = 1
 ## Notes
 
 - `/my-items` stress is partly system-bound because `auth-service`, `data-service`, and the gateway share the same 4 vCPUs.
+- Direct `data-service` baseline excludes `auth-service`; use it only to separate data backend capacity from gateway overhead.
 - Kong/APISIX keepalive request caps are set to `1000000`; apigate/Python do not expose an equivalent per-connection request cap.
 - Result files currently live under `load-tests/results/results/`.
