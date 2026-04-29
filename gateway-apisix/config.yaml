@@ -1,0 +1,37 @@
+apisix:
+  node_listen:
+    # backlog=1024 with SO_REUSEPORT gives 4 workers x 1024 = 4096
+    # cumulative accept capacity on the 4-vCPU benchmark host, matching Kong.
+    - port: 9080
+      backlog: 1024
+  enable_admin: false
+  enable_control: false
+  enable_reuseport: true
+  enable_ipv6: false
+  extra_lua_path: "/usr/local/apisix/lua/?.lua"
+  upstream:
+    # APISIX's default upstream pool is global per worker. Per-upstream
+    # keepalive_pool in apisix.yaml repeats these values explicitly.
+    keepalive: 512
+    keepalive_requests: 1000000
+    keepalive_timeout: 120s
+
+nginx_config:
+  error_log: /dev/stderr
+  error_log_level: notice
+  worker_processes: auto
+  worker_rlimit_nofile: 65536
+  event:
+    worker_connections: 16384
+  http:
+    enable_access_log: false
+    access_log: "off"
+    http_server_configuration_snippet: |
+      proxy_socket_keepalive on;
+    keepalive_timeout: 120s
+    keepalive_requests: 1000000
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml

@@ -1,0 +1,87 @@
+# APISIX mirror of ../gateway-kong: four catalogue-API scenarios, one upstream.
+#   GET  /items          -> bare proxy (baseline)
+#   GET  /my-items       -> require_auth only
+#   POST /items/search   -> typed body validation
+#   POST /items/lookup   -> validation + body rewrite ({q} -> {query, limit, source})
+# Lua lives in ./lua/{require_auth,transforms}.lua (mounted into the APISIX container).
+# auth-service is reached only from require_auth.lua (by DNS `auth:8001`).
+
+routes:
+  - id: items-list
+    name: items-list
+    uri: /items
+    methods:
+      - GET
+    upstream_id: data-service
+
+  - id: items-mine
+    name: items-mine
+    uri: /my-items
+    methods:
+      - GET
+    upstream_id: data-service
+    plugins:
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            local run = require("require_auth").run
+            local auth_config = {
+              auth_url = "http://auth:8001/verify",
+              verify_timeout_ms = 3000,
+              keepalive_timeout_ms = 120000,
+              keepalive_pool = 512,
+            }
+            return function(conf, ctx)
+              return run(auth_config)
+            end
+
+  - id: items-search
+    name: items-search
+    uri: /items/search
+    methods:
+      - POST
+    upstream_id: data-service
+    plugins:
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            local validate = require("transforms").validate
+            return function(conf, ctx)
+              return validate()
+            end
+
+  - id: items-lookup
+    name: items-lookup
+    uri: /items/lookup
+    methods:
+      - POST
+    upstream_id: data-service
+    plugins:
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            local remap = require("transforms").remap
+            return function(conf, ctx)
+              return remap()
+            end
+
+upstreams:
+  - id: data-service
+    name: data-service
+    type: roundrobin
+    scheme: http
+    nodes:
+      "data:8002": 1
+    timeout:
+      connect: 3
+      send: 10
+      read: 10
+    keepalive_pool:
+      size: 512
+      idle_timeout: 120
+      requests: 1000000
+
+#END
