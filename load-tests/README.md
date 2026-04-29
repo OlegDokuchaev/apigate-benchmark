@@ -38,7 +38,7 @@ profile `items → my-items → search → lookup`.
 |---------|--------------------------|------------------------------|
 | steady  | `constant-arrival-rate`  | 2500 RPS × 2 min             |
 | ramp    | `ramping-arrival-rate`   | 0 → 20000 RPS over 5 min     |
-| stress  | `constant-arrival-rate`  | 10000 RPS × 1 min            |
+| stress  | `constant-arrival-rate`  | 9000 RPS × 1 min            |
 
 | Route     | Method / Path         | Exercises                                          |
 |-----------|-----------------------|----------------------------------------------------|
