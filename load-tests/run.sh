@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Runs the profile × route matrix against a single gateway. When cAdvisor is
+# Runs the profile × route matrix against a single target. When cAdvisor is
 # reachable, pulls per-container CPU / memory / network after each k6 run.
 #
 # Usage:
-#   ./run.sh <gateway-name> <gateway-url>
+#   ./run.sh <target-name> <target-url>
 #   ./run.sh apigate  http://localhost:8080
 #   ./run.sh kong     http://localhost:8090
 #   ./run.sh apisix   http://localhost:8093
 #   ./run.sh python   http://localhost:8092
+#   ./run.sh data     http://localhost:8002
 #
 # Override profile defaults via env:
 #   STEADY_RPS=800 STRESS_RPS=4000 ./run.sh apigate http://localhost:8080
@@ -18,12 +19,11 @@
 #   WARMUP=5             seconds to drop from the start of each sample series
 #   COOLDOWN=60          seconds between runs (TIME_WAIT drain)
 #
-# Run one gateway at a time — stop the others so they don't share CPU.
+# Run one target at a time — stop the others so they don't share CPU.
 
 set -euo pipefail
 
-GATEWAY_NAME=${1:-apigate}
-GATEWAY_URL=${2:-http://localhost:8080}
+TARGET_NAME=${1:-apigate}
 AUTH_URL=${AUTH_URL:-http://localhost:8001}
 CADVISOR_URL=${CADVISOR_URL:-http://localhost:8099}
 COOLDOWN=${COOLDOWN:-30}
@@ -41,14 +41,34 @@ if ! command -v k6 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Map CLI gateway name → docker-compose service name.
-case "$GATEWAY_NAME" in
-    apigate) GATEWAY_SERVICE=gateway-apigate ;;
-    kong)    GATEWAY_SERVICE=gateway-kong    ;;
-    apisix)  GATEWAY_SERVICE=gateway-apisix  ;;
-    python)  GATEWAY_SERVICE=gateway-python  ;;
-    *)       GATEWAY_SERVICE=gateway-$GATEWAY_NAME ;;
-esac
+target_mode_for() {
+    case "$1" in
+        data) echo direct-data ;;
+        *)    echo gateway ;;
+    esac
+}
+
+default_url_for() {
+    case "$1" in
+        data) echo http://localhost:8002 ;;
+        *)    echo http://localhost:8080 ;;
+    esac
+}
+
+compose_service_for() {
+    case "$1" in
+        apigate) echo gateway-apigate ;;
+        kong)    echo gateway-kong ;;
+        apisix)  echo gateway-apisix ;;
+        python)  echo gateway-python ;;
+        data)    echo data ;;
+        *)       echo "gateway-$1" ;;
+    esac
+}
+
+TARGET_MODE=$(target_mode_for "$TARGET_NAME")
+TARGET_URL=${2:-$(default_url_for "$TARGET_NAME")}
+TARGET_SERVICE=$(compose_service_for "$TARGET_NAME")
 
 # -- discovery ----------------------------------------------------------------
 
@@ -91,13 +111,18 @@ if [[ "$SAMPLE_RESOURCES" == "1" ]]; then
         echo "      (start it with: docker compose up -d cadvisor)"
         SAMPLE_RESOURCES=0
     else
+        SERVICES=("$TARGET_SERVICE" auth data cadvisor)
+        if [[ "$TARGET_MODE" == "direct-data" ]]; then
+            SERVICES=(data cadvisor)
+        fi
+
         # `cadvisor` last so the measurer's own footprint shows up in the report.
-        for svc in "$GATEWAY_SERVICE" auth data cadvisor; do
+        for svc in "${SERVICES[@]}"; do
             name=$(find_container "$svc" || true)
             [[ -n "$name" ]] && SAMPLE_TARGETS+=("$name")
         done
         if [[ ${#SAMPLE_TARGETS[@]} -eq 0 ]]; then
-            echo "note: no running compose containers for '$GATEWAY_SERVICE' — skipping resource collection"
+            echo "note: no running compose containers for '$TARGET_SERVICE' — skipping resource collection"
             SAMPLE_RESOURCES=0
         fi
     fi
@@ -120,22 +145,23 @@ collect_resources() {
 
 run_cell() {
     local profile=$1 route=$2
-    local key=${GATEWAY_NAME}_${route}_${profile}
+    local key=${TARGET_NAME}_${route}_${profile}
     local res_json=results/${key}_resources.json
 
     echo "=================================================="
-    echo ">>> $GATEWAY_NAME / $route / $profile"
+    echo ">>> $TARGET_NAME / $route / $profile"
     echo "=================================================="
 
     local start_ts=$(date +%s)
 
     local k6_rc=0
     k6 run \
-        -e GATEWAY_NAME="$GATEWAY_NAME" \
-        -e GATEWAY_URL="$GATEWAY_URL" \
+        -e GATEWAY_NAME="$TARGET_NAME" \
+        -e GATEWAY_URL="$TARGET_URL" \
         -e AUTH_URL="$AUTH_URL" \
         -e ROUTE="$route" \
         -e PROFILE="$profile" \
+        -e TARGET_MODE="$TARGET_MODE" \
         k6/scenario.js || k6_rc=$?
 
     local end_ts=$(date +%s)
@@ -149,8 +175,13 @@ run_cell() {
 
 # -- main loop ----------------------------------------------------------------
 
-echo "gateway:  $GATEWAY_NAME ($GATEWAY_URL)"
-echo "auth:     $AUTH_URL"
+echo "target:   $TARGET_NAME ($TARGET_URL)"
+if [[ "$TARGET_MODE" == "direct-data" ]]; then
+    echo "mode:     direct data-service contract"
+else
+    echo "mode:     gateway"
+    echo "auth:     $AUTH_URL"
+fi
 echo "matrix:   profiles=[${PROFILES[*]}] routes=[${ROUTES[*]}]"
 if [[ "$SAMPLE_RESOURCES" == "1" ]]; then
     echo "cadvisor: $CADVISOR_URL containers=[${SAMPLE_TARGETS[*]}] warmup=${WARMUP}s"
@@ -175,7 +206,7 @@ for profile in "${PROFILES[@]}"; do
 done
 
 echo "done. results/ contains:"
-echo "  <gateway>_<route>_<profile>.json            — k6 per-run summary"
+echo "  <target>_<route>_<profile>.json             — k6 per-run summary"
 if [[ "$SAMPLE_RESOURCES" == "1" ]]; then
-    echo "  <gateway>_<route>_<profile>_resources.json  — cAdvisor per-container aggregates"
+    echo "  <target>_<route>_<profile>_resources.json   — cAdvisor per-container aggregates"
 fi

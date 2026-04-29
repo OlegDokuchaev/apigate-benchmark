@@ -33,7 +33,7 @@ Apigate advantage from the latest 4-vCPU Linux run:
 
 `/my-items` is partly system-bound because auth/data/gateway share the same 4 vCPU host.
 
-## Run
+## Run Gateways
 
 Bring up one gateway at a time:
 
@@ -53,6 +53,31 @@ docker compose stop gateway-apisix
 docker compose up -d gateway-python
 ./load-tests/run.sh python http://localhost:8092
 ```
+
+## Run Data Baseline
+
+Use this to check whether the stress ceiling comes from `data-service` rather
+than from a gateway:
+
+```bash
+docker compose up -d data cadvisor
+./load-tests/run.sh data
+```
+
+`data` defaults to `http://localhost:8002` and uses the direct internal service
+contract:
+
+| Route | Direct behavior |
+|---|---|
+| `items` | same `GET /items` |
+| `my-items` | sends `x-user-id` / `x-user-email`; no auth-service call |
+| `search` | same `POST /items/search` body |
+| `lookup` | sends `{query, limit, source}` instead of public `{q}` |
+
+If direct `data` saturates near the same RPS as a gateway, the bottleneck is
+probably service-side. If direct `data` is much higher, the gateway path is the
+limiting layer for that route. For `/my-items`, this baseline intentionally
+excludes auth-service; test auth separately if needed.
 
 Each run writes:
 

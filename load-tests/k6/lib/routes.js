@@ -1,23 +1,36 @@
-// One function per public gateway route. A k6 run invokes exactly one of
-// these per iteration (driven by the ROUTE env in scenario.js).
+// One function per benchmark route. A k6 run invokes exactly one of these per
+// iteration (driven by the ROUTE env in scenario.js).
 // The `route` metric tag is set globally in scenario.js — no need to repeat
 // it per request.
 
 import http from 'k6/http';
 
 const jsonHeaders = { 'content-type': 'application/json' };
+const directUserHeaders = { 'X-User-Id': 'loadtest-user', 'X-User-Email': 'loadtest@example.com' };
+const jsonParams = { headers: jsonHeaders };
+const directUserParams = { headers: directUserHeaders };
 
 // Pre-stringified bodies — avoids re-serializing the same JSON each iteration.
 const searchBody = JSON.stringify({ category: 'office', max_price: 300 });
-const lookupBody = JSON.stringify({ q: 'pen' });
+const publicLookupBody = JSON.stringify({ q: 'pen' });
+const internalLookupBody = JSON.stringify({ query: 'pen', limit: 20, source: 'gateway' });
 
-export const routes = {
-    'items':    (gw)        => http.get(`${gw}/items`),
-    'my-items': (gw, token) => http.get(`${gw}/my-items`, {
-        headers: { authorization: `Bearer ${token}` },
-    }),
-    'search':   (gw) => http.post(`${gw}/items/search`, searchBody, { headers: jsonHeaders }),
-    'lookup':   (gw) => http.post(`${gw}/items/lookup`, lookupBody, { headers: jsonHeaders }),
+const gatewayRoutes = {
+    'items':    (gw) => http.get(`${gw}/items`),
+    'my-items': (gw, setupData) => http.get(`${gw}/my-items`, setupData.authParams),
+    'search':   (gw) => http.post(`${gw}/items/search`, searchBody, jsonParams),
+    'lookup':   (gw) => http.post(`${gw}/items/lookup`, publicLookupBody, jsonParams),
 };
 
-export const routeNames = Object.keys(routes);
+const directDataRoutes = {
+    'items':    (gw) => http.get(`${gw}/items`),
+    'my-items': (gw) => http.get(`${gw}/my-items`, directUserParams),
+    'search':   (gw) => http.post(`${gw}/items/search`, searchBody, jsonParams),
+    'lookup':   (gw) => http.post(`${gw}/items/lookup`, internalLookupBody, jsonParams),
+};
+
+export function selectRoutes(targetMode) {
+    return targetMode === 'direct-data' ? directDataRoutes : gatewayRoutes;
+}
+
+export const routeNames = Object.keys(gatewayRoutes);
