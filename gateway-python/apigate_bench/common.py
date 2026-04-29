@@ -33,7 +33,7 @@ class ClientDisconnected(Exception):
     pass
 
 
-async def read_body(receive: ASGIReceive, *, limit: int) -> bytes:
+async def read_body(receive: ASGIReceive) -> bytes:
     while True:
         message = await receive()
         msg_type = message["type"]
@@ -45,13 +45,8 @@ async def read_body(receive: ASGIReceive, *, limit: int) -> bytes:
     first_chunk: bytes = message.get("body", b"")
     if not message.get("more_body", False):
         # Fast path: entire body arrived in a single http.request message.
-        if len(first_chunk) > limit:
-            raise ValueError(f"request body exceeds limit {limit} bytes")
         return first_chunk
 
-    total = len(first_chunk)
-    if total > limit:
-        raise ValueError(f"request body exceeds limit {limit} bytes")
     chunks: list[bytes] = [first_chunk] if first_chunk else []
     while True:
         message = await receive()
@@ -62,9 +57,6 @@ async def read_body(receive: ASGIReceive, *, limit: int) -> bytes:
             continue
         chunk = message.get("body", b"")
         if chunk:
-            total += len(chunk)
-            if total > limit:
-                raise ValueError(f"request body exceeds limit {limit} bytes")
             chunks.append(chunk)
         if not message.get("more_body", False):
             break

@@ -50,19 +50,15 @@ class AuthClient:
                 headers={"Authorization": authorization},
                 timeout=self._timeout,
             ) as resp:
-                if resp.status == 401:
-                    raise AuthError(401, "invalid token")
-                if resp.status >= 500:
-                    raise AuthError(502, "auth upstream error")
                 if resp.status != 200:
-                    raise AuthError(502, f"unexpected auth status {resp.status}")
+                    raise AuthError(401, "invalid or expired token")
                 raw = await resp.read()
         except asyncio.TimeoutError as exc:
-            raise AuthError(504, "auth timeout") from exc
+            raise AuthError(401, "auth verify failed: timeout") from exc
         except aiohttp.ClientError as exc:
-            raise AuthError(502, f"auth client error: {exc}") from exc
+            raise AuthError(401, f"auth verify failed: {exc}") from exc
 
         try:
             return _verify_decoder.decode(raw)
         except (msgspec.ValidationError, msgspec.DecodeError) as exc:
-            raise AuthError(502, f"malformed verify response: {exc}") from exc
+            raise AuthError(401, "bad verify response") from exc

@@ -1,3 +1,6 @@
+import socket
+from typing import Any
+
 import aiohttp
 import msgspec
 
@@ -55,6 +58,23 @@ def _build_auth_timeout() -> aiohttp.ClientTimeout:
     )
 
 
+def _set_tcp_option(sock: socket.socket, name: str, value: int) -> None:
+    option = getattr(socket, name, None)
+    if option is not None:
+        sock.setsockopt(socket.IPPROTO_TCP, option, value)
+
+
+def _tcp_socket_factory(addr_info: tuple[Any, ...]) -> socket.socket:
+    family, type_, proto, _, _ = addr_info
+    sock = socket.socket(family=family, type=type_, proto=proto)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        _set_tcp_option(sock, "TCP_KEEPIDLE", settings.AIOHTTP_TCP_KEEPALIVE_IDLE)
+    else:
+        _set_tcp_option(sock, "TCP_KEEPALIVE", settings.AIOHTTP_TCP_KEEPALIVE_IDLE)
+    return sock
+
+
 def _build_session() -> aiohttp.ClientSession:
     # auto_decompress=False — we are a transparent proxy; decompressing would
     # force us to re-encode and lie about content-encoding/length to the client.
@@ -70,6 +90,7 @@ def _build_session() -> aiohttp.ClientSession:
             limit=settings.AIOHTTP_CONNECTOR_LIMIT,
             limit_per_host=settings.AIOHTTP_LIMIT_PER_HOST,
             keepalive_timeout=settings.AIOHTTP_KEEPALIVE_TIMEOUT,
+            socket_factory=_tcp_socket_factory,
             use_dns_cache=True,
             ttl_dns_cache=settings.AIOHTTP_DNS_TTL,
             enable_cleanup_closed=True,
@@ -148,7 +169,7 @@ async def handle_search(
     send: ASGISend,
     session: aiohttp.ClientSession,
 ) -> None:
-    body = await read_body(receive, limit=settings.MAX_BODY_BYTES)
+    body = await read_body(receive)
     try:
         _search_decoder.decode(body)
     except (msgspec.ValidationError, msgspec.DecodeError) as exc:
@@ -172,7 +193,7 @@ async def handle_lookup(
     send: ASGISend,
     session: aiohttp.ClientSession,
 ) -> None:
-    body = await read_body(receive, limit=settings.MAX_BODY_BYTES)
+    body = await read_body(receive)
     try:
         payload = _lookup_decoder.decode(body)
     except (msgspec.ValidationError, msgspec.DecodeError) as exc:
@@ -268,8 +289,6 @@ def main() -> ASGIApp:
                     await handle_lookup(scope, receive, send, session)
                     return
             await send_error(send, 404, f"unknown route: {method} {path}")
-        except ValueError as exc:
-            await send_error(send, 413, str(exc))
         except ClientDisconnected:
             return
         except aiohttp.ClientError as exc:

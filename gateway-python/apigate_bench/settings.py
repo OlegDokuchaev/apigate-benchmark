@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     # auth-service /verify endpoint (full URL).
     AUTH_VERIFY_URL: str = "http://127.0.0.1:8001/verify"
 
-    # Body limit for endpoints that buffer (search / lookup validation).
-    MAX_BODY_BYTES: int = 1024 * 1024
-
     # aiohttp connector tuning — unlimited pool, DNS cache on.
     AIOHTTP_CONNECTOR_LIMIT: int = 0
     # Per-host idle pool cap. 0 = unlimited (matches AIOHTTP_CONNECTOR_LIMIT
@@ -30,11 +27,15 @@ class Settings(BaseSettings):
     # is 15s — too short for k6 profile transitions (steady → pause → ramp);
     # idle sockets time out and the next wave pays a full TCP handshake.
     AIOHTTP_KEEPALIVE_TIMEOUT: float = 120.0
+    # Socket-level TCP keepalive idle before the first probe. This mirrors
+    # apigate's TCP_KEEPALIVE config on upstream sockets.
+    AIOHTTP_TCP_KEEPALIVE_IDLE: int = 30
 
-    # Timeouts. Auth is on the request critical path, so a tighter budget.
+    # Timeouts. Connect budgets are aligned across auth/data and gateways;
+    # auth keeps a tighter total budget because it is single-shot.
     UPSTREAM_CONNECT_TIMEOUT: float = 3.0
     UPSTREAM_TOTAL_TIMEOUT: float = 10.0
-    AUTH_CONNECT_TIMEOUT: float = 1.0
+    AUTH_CONNECT_TIMEOUT: float = 3.0
     AUTH_TOTAL_TIMEOUT: float = 3.0
 
 
