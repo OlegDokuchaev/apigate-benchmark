@@ -44,7 +44,7 @@ export const profileNames = Object.keys(profiles);
 // (e.g. /register + /login for my-items) don't dilute the main load metric.
 // Scenario name matches PROFILE because options.scenarios is keyed by PROFILE.
 //   steady — soft floor: fail the run if >1 % errored (no abort, just exit code).
-//   ramp   — soft thresholds: p99 > 3 s or failure rate > 10 %.
+//   ramp   — abort after 15s if p99 >= 1s or failure rate >= 5 %.
 //   stress — no thresholds; we want to observe degradation, not assert it.
 export const thresholds = {
     steady: {

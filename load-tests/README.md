@@ -1,11 +1,16 @@
 # load-tests
 
-[k6](https://k6.io/) matrix for comparing the three gateway implementations
-(`gateway-apigate`, `gateway-kong`, `gateway-python`) under identical load.
+[k6](https://k6.io/) matrix for comparing the four gateway implementations
+(`gateway-apigate`, `gateway-kong`, `gateway-apisix`, `gateway-python`) under identical load.
 Each run executes one profile × one route × one gateway and writes a
 per-run JSON summary. When [cAdvisor](https://github.com/google/cadvisor) is
 running alongside (included in the compose stack), per-container CPU /
 memory / network stats are pulled for every iteration.
+
+> **Latest matrix run on 4 vCPU / 10 GiB Linux** — see [`RESULTS.md`](RESULTS.md)
+> for the full breakdown (steady / ramp / stress, all four routes, the original
+> three gateways) plus per-container CPU and memory. `gateway-apisix` was added
+> after that run; rerun the matrix to add APISIX rows.
 
 ## Layout
 
@@ -32,8 +37,8 @@ profile `items → my-items → search → lookup`.
 | Profile | Executor                 | Default shape                |
 |---------|--------------------------|------------------------------|
 | steady  | `constant-arrival-rate`  | 2500 RPS × 2 min             |
-| ramp    | `ramping-arrival-rate`   | 0 → 10000 RPS over 5 min     |
-| stress  | `constant-arrival-rate`  | 12000 RPS × 1 min            |
+| ramp    | `ramping-arrival-rate`   | 0 → 20000 RPS over 5 min     |
+| stress  | `constant-arrival-rate`  | 10000 RPS × 1 min            |
 
 | Route     | Method / Path         | Exercises                                          |
 |-----------|-----------------------|----------------------------------------------------|
@@ -46,11 +51,19 @@ All profiles are open-model: RPS is pinned, latency reflects the gateway's
 state rather than VU-pool saturation. Thresholds vary per profile:
 
 - `steady` asserts `http_req_failed < 1 %` — the gateway should be fine here.
-- `ramp` aborts the cell on either signal: `p99 > 1 s` **or**
-  `http_req_failed > 5 %`. Both are scoped to `{scenario:ramp}` so
-  `setup()` requests don't dilute the metric, and have a 15 s grace
-  period so connection-setup spikes don't trip them prematurely.
+- `ramp` aborts after the first 15s if `p99 >= 1s` or
+  `http_req_failed >= 5 %`. The ramp target is intentionally high; these
+  thresholds mark the point where the cell is no longer in the comparable
+  operating range.
 - `stress` has no thresholds: we want to observe degradation, not assert it.
+
+The 0 → 20 000 RPS ramp is sized so apigate's saturation is reachable on a
+4-vCPU host (its ceiling on `items`/`search`/`lookup` sits around 12–17k RPS;
+a 0 → 10k ramp never approached it). Kong's ceiling sits ~10–12k, python's
+~3–4k — at 20 000 RPS target, the original three pass through their saturation
+point mid-ramp. APISIX uses the same ramp target; record its saturation point
+after the first run. For more focused per-gateway sweeps see
+[Per-gateway overrides](#per-gateway-overrides).
 
 ## Running
 
@@ -66,6 +79,10 @@ docker compose up -d gateway-kong
 ./load-tests/run.sh kong http://localhost:8090
 
 docker compose stop gateway-kong
+docker compose up -d gateway-apisix
+./load-tests/run.sh apisix http://localhost:8093
+
+docker compose stop gateway-apisix
 docker compose up -d gateway-python
 ./load-tests/run.sh python http://localhost:8092
 ```
@@ -108,6 +125,53 @@ Driver-level overrides for `run.sh`:
 | `SAMPLE_RESOURCES` | `1`                            | Set to `0` to skip cAdvisor collection.                       |
 | `CADVISOR_URL`     | `http://localhost:8099`        | Where `collect_resources.py` looks for cAdvisor.              |
 | `WARMUP`           | `3`                            | Seconds dropped from the start of each resource sample series. |
+
+### Per-gateway overrides
+
+The default `stress` rate is one number for all implementations, which
+is a useful for head-to-head numbers but is wasteful when you want to find
+each gateway's actual ceiling. The measured saturation points differ by ~5x:
+
+| Gateway        | Approx. ceiling on 4 vCPU (non-auth routes) | Useful stress RPS |
+|----------------|---------------------------------------------|-------------------|
+| gateway-apigate | 12–17 k                                    | `STRESS_RPS=15000` |
+| gateway-kong    | 10–12 k                                    | `STRESS_RPS=12000` |
+| gateway-apisix  | TBD after first matrix run                 | start with default |
+| gateway-python  | 3–4 k                                      | `STRESS_RPS=5000`  |
+
+The default 10 000 RPS is a useful common stress point but tells you very
+different things: apigate is below or near saturation, kong is near its ceiling,
+python is catastrophically saturated (response p99 → client-timeout, error
+rate non-zero, achieved RPS << target). Use the default as the first APISIX
+probe, then pin a per-gateway stress value once its ceiling is known. For a
+clean comparison at each gateway's own edge:
+
+```bash
+docker compose up -d auth data gateway-apigate cadvisor
+STRESS_RPS=15000 ./load-tests/run.sh apigate http://localhost:8080
+
+docker compose stop gateway-apigate
+docker compose up -d gateway-kong
+STRESS_RPS=12000 ./load-tests/run.sh kong http://localhost:8090
+
+docker compose stop gateway-kong
+docker compose up -d gateway-apisix
+./load-tests/run.sh apisix http://localhost:8093   # initial APISIX probe
+
+docker compose stop gateway-apisix
+docker compose up -d gateway-python
+STRESS_RPS=5000 ./load-tests/run.sh python http://localhost:8092
+```
+
+The matching `_resources.json` files capture CPU/mem at the gateway's own
+ceiling, which is the only level where saturation numbers are meaningful.
+
+The `/my-items` route is **system-bound rather than gateway-bound** in
+this setup — `auth-service`, `data-service`, and the gateway all share the
+same 4 vCPUs, so its ceiling reflects the whole stand, not the gateway code.
+Numbers from `/my-items` under `stress` should be read with that caveat;
+for a clean gateway-only auth saturation test, run `auth-service` on a
+separate host (or scale it horizontally).
 
 Run a single cell of the matrix directly with k6 if you don't need the
 matrix:
@@ -159,7 +223,7 @@ slices the buffer to the window, and writes the aggregated JSON.
   `docker inspect` — cAdvisor keys stats by ID.
 - **Warmup.** The default 3 s warmup drops the very first samples (k6's
   `register` / `login` bcrypt spike on auth for `my-items` plus TCP-pool
-  warm-up in all three gateways).
+  warm-up in all four gateways).
 
 Skip collection with `SAMPLE_RESOURCES=0 ./run.sh ...`, e.g. when running a
 gateway locally outside Docker (`cargo run` / `python -m granian`). The

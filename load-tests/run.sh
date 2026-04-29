@@ -6,6 +6,7 @@
 #   ./run.sh <gateway-name> <gateway-url>
 #   ./run.sh apigate  http://localhost:8080
 #   ./run.sh kong     http://localhost:8090
+#   ./run.sh apisix   http://localhost:8093
 #   ./run.sh python   http://localhost:8092
 #
 # Override profile defaults via env:
@@ -44,6 +45,7 @@ fi
 case "$GATEWAY_NAME" in
     apigate) GATEWAY_SERVICE=gateway-apigate ;;
     kong)    GATEWAY_SERVICE=gateway-kong    ;;
+    apisix)  GATEWAY_SERVICE=gateway-apisix  ;;
     python)  GATEWAY_SERVICE=gateway-python  ;;
     *)       GATEWAY_SERVICE=gateway-$GATEWAY_NAME ;;
 esac
