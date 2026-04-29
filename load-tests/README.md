@@ -17,7 +17,8 @@ k6 matrix runner for the four gateways. Resource metrics come from cAdvisor.
 | `search` | `POST /items/search` | body validation |
 | `lookup` | `POST /items/lookup` | validation + body rewrite |
 
-Full matrix: `4 gateways x 4 routes x 3 profiles = 48 runs`.
+Gateway matrix: `4 gateways x 4 routes x 3 profiles = 48 runs`.
+Direct data baseline: `1 target x 4 routes x 3 profiles = 12 runs`.
 
 ## Latest Results
 
@@ -32,6 +33,7 @@ Apigate advantage from the latest 4-vCPU Linux run:
 | stress | p99 latency speedup | 7-70% | 32-159% | 669-28376% |
 
 `/my-items` is partly system-bound because auth/data/gateway share the same 4 vCPU host.
+Direct `data-service` reaches ~19.4-19.8k peak RPS in ramp with p99 under 56 ms, so `data-service` is not the primary ramp bottleneck for `items`, `search`, or `lookup`.
 
 ## Run Gateways
 
@@ -83,8 +85,8 @@ Each run writes:
 
 | File | Contents |
 |---|---|
-| `results/<gateway>_<route>_<profile>.json` | k6 metrics |
-| `results/<gateway>_<route>_<profile>_resources.json` | cAdvisor CPU/memory/network |
+| `results/<target>_<route>_<profile>.json` | k6 metrics |
+| `results/<target>_<route>_<profile>_resources.json` | cAdvisor CPU/memory/network |
 
 Imported latest-result files currently live under `load-tests/results/results/`.
 

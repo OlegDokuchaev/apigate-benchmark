@@ -3,14 +3,47 @@
 Run: **4 vCPU / 10 GiB Linux**, one gateway at a time, host tuned per root README.
 
 Source: `load-tests/results/results/*.json`.
-Matrix complete: `4 gateways x 4 routes x 3 profiles = 48` k6 summaries plus 48 resource summaries.
+Matrix complete: `4 gateways x 4 routes x 3 profiles = 48` gateway summaries plus 48 resource summaries.
+Direct `data-service` baseline complete: `1 target x 4 routes x 3 profiles = 12` summaries plus 12 resource summaries.
 
 Metrics:
 
 - `steady`: compare p99 latency. Lower is faster.
-- `ramp`: compare achieved avg RPS. All cells abort near p99=1s, so p99 itself is not a speed metric here.
+- `ramp`: compare achieved avg RPS. Gateway cells abort near p99=1s; direct data did not hit this threshold.
 - `stress`: compare p99 latency and achieved RPS at the common 9000 RPS target.
 - Error rates are scenario-scoped (`http_req_failed{scenario:...}`), so setup requests do not pollute `my-items`.
+
+## Direct Data Baseline
+
+Direct `data` uses the internal service contract. `my-items` sends identity headers directly and does not call `auth-service`; `lookup` sends the already-rewritten `{query, limit, source}` body.
+
+### Data summary
+
+| Profile | Route | RPS | p99 | err | dropped | data CPU avg | Mem peak |
+|---|---|---:|---:|---:|---:|---:|---:|
+| steady | items | 2500 | 2.02 ms | 0 | 0 | 17% | 25 MiB |
+| steady | my-items | 2500 | 1.82 ms | 0 | 0 | 16% | 25 MiB |
+| steady | search | 2500 | 2.41 ms | 0 | 0 | 20% | 27 MiB |
+| steady | lookup | 2500 | 2.06 ms | 0 | 0 | 19% | 28 MiB |
+| ramp | items | 9888 avg / ~19776 peak | 49.98 ms | 0 | 7927 | 43% | 79 MiB |
+| ramp | my-items | 9828 avg / ~19657 peak | 40.94 ms | 0 | 1197 | 40% | 77 MiB |
+| ramp | search | 9681 avg / ~19361 peak | 53.46 ms | 0 | 10198 | 46% | 84 MiB |
+| ramp | lookup | 9725 avg / ~19450 peak | 55.48 ms | 0 | 3092 | 46% | 84 MiB |
+| stress | items | 8986 | 174.0 ms | 0 | 752 | 48% | 83 MiB |
+| stress | my-items | 8979 | 194.4 ms | 0 | 1013 | 45% | 78 MiB |
+| stress | search | 8967 | 200.1 ms | 0 | 1930 | 51% | 86 MiB |
+| stress | lookup | 8954 | 201.9 ms | 0 | 2678 | 51% | 85 MiB |
+
+### What it means
+
+| Route | Ramp: data RPS vs apigate | Stress: data p99 vs apigate | Read |
+|---|---:|---:|---|
+| items | +44% | 17% lower | data is not the ramp bottleneck; 9000 RPS stress is closer to shared host/network limits |
+| my-items | +116% | 98% lower | not apples-to-apples: direct data excludes auth-service and gateway auth work |
+| search | +53% | 28% lower | data has enough headroom; gateway path is the ramp ceiling |
+| lookup | +55% | 23% lower | data has enough headroom; gateway validation/rewrite path is the ramp ceiling |
+
+Direct data did not return errors. Ramp dropped iterations are below 0.4% of attempted work, so they look like generator/host scheduling pressure near 20k RPS rather than data-service failures.
 
 ## Apigate Advantage
 
@@ -128,5 +161,6 @@ Formula: `(apigate_RPS / other_RPS - 1) * 100`.
 - apigate has the lowest p99 in every steady scenario.
 - APISIX is consistently lower-latency than Kong in steady and stress, and uses much less memory.
 - Python is acceptable at steady `items`, but saturates hard under stress and on validation/auth routes.
-- `/my-items` stress is not a clean gateway-only comparison: auth-service, data-service, and gateway share the same 4 vCPUs.
+- Direct `data` shows the backend is not the primary ramp bottleneck for `items`, `search`, or `lookup`; apigate still has 44-55% lower ramp capacity than direct data on those routes.
+- `/my-items` stress is not a clean gateway-only comparison: auth-service, data-service, and gateway share the same 4 vCPUs. The direct data baseline confirms `data-service` alone is not the limiting part of that path.
 - No gateway container shows CFS throttling in resource summaries; bottlenecks are application/system capacity, not Docker CPU quota.
