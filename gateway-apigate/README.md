@@ -34,10 +34,11 @@ All via env vars. Defaults are in `.env`; compose overrides with `.env.docker`.
 | `REQUEST_TIMEOUT`   | `10s`                    | Total budget for the upstream data call.        |
 | `CONNECT_TIMEOUT`   | `3s`                     | TCP connect timeout for data / auth.            |
 | `VERIFY_TIMEOUT`    | `3s`                     | Total budget for `POST /verify`. Sized well under `REQUEST_TIMEOUT` so auth failure does not consume the whole request budget. |
-| `POOL_IDLE_TIMEOUT` | `120s`                   | How long idle upstream sockets stay in the hyper / reqwest pool. Aligned with the same setting in kong (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`) and python (`AIOHTTP_KEEPALIVE_TIMEOUT`) so the three gateways are compared at the same pool aging. |
-| `DATA_POOL_MAX_IDLE_PER_HOST` | `2048`         | Cap on idle hyper-util connections to `data-service`. Default in `UpstreamConfig` is `usize::MAX` (unbounded), which lets the idle pool blow up FDs under bursty ramp profiles. 2048 matches cumulative kong (4 workers × 512) and python (4 workers × 512) capacity, so the three gateways enter ramp burst with the same upstream-pool budget. Requires `apigate ≥ 0.2.5` (`UpstreamConfig::pool_max_idle_per_host`) and host `ulimit -n ≥ 65536` so the single tokio process can hold 2048 idle + inbound + inflight FDs without hitting ENOBUFS. |
-| `AUTH_POOL_MAX_IDLE_PER_HOST` | `2048`         | Cap on idle reqwest connections to `auth-service`. Critical under ramp on `/my-items`: when `auth-service` slows under load, in-flight `/verify` calls accumulate beyond the pool, which then opens fresh TCP per excess request and closes them on the way back (TIME_WAIT churn) — that's what pushed apigate's `/my-items` ramp p99 over 1 s before reaching peak in earlier benchmark generations. 2048 matches kong's per-worker × 4 (`KEEPALIVE_POOL_SIZE=512` in `lua/require_auth.lua`) and python's `AIOHTTP_LIMIT_PER_HOST × 4`. |
-| `LISTEN_BACKLOG`    | `4096`                   | `listen(2)` backlog passed to `apigate::ServeConfig::backlog`. Matches cumulative reuseport capacity of kong / python on a 4-core host. Kernel still clamps to `net.core.somaxconn` — raise that on the host too. Requires `apigate ≥ 0.2.6` (`ServeConfig`/`run_with`). |
+| `POOL_IDLE_TIMEOUT` | `120s`                   | How long idle upstream sockets stay in the hyper / reqwest pool. Aligned with the same setting in Kong (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`), APISIX (`keepalive_pool.idle_timeout`), and Python (`AIOHTTP_KEEPALIVE_TIMEOUT`) so the four gateways are compared at the same pool aging. |
+| `TCP_KEEPALIVE`     | `30s`                    | Socket-level TCP keepalive idle for gateway -> upstream sockets. Used by both the data `HttpConnector` and auth `reqwest` client. |
+| `DATA_POOL_MAX_IDLE_PER_HOST` | `2048`         | Cap on idle hyper-util connections to `data-service`. Default in `UpstreamConfig` is `usize::MAX` (unbounded), which lets the idle pool blow up FDs under bursty ramp profiles. 2048 matches cumulative Kong/APISIX (4 workers × 512) and Python (4 workers × 512) capacity, so the four gateways enter ramp burst with the same upstream-pool budget. Requires `apigate ≥ 0.2.5` (`UpstreamConfig::pool_max_idle_per_host`) and host `ulimit -n ≥ 65536` so the single tokio process can hold 2048 idle + inbound + inflight FDs without hitting ENOBUFS. |
+| `AUTH_POOL_MAX_IDLE_PER_HOST` | `2048`         | Cap on idle reqwest connections to `auth-service`. Critical under ramp on `/my-items`: when `auth-service` slows under load, in-flight `/verify` calls accumulate beyond the pool, which then opens fresh TCP per excess request and closes them on the way back (TIME_WAIT churn) — that's what pushed apigate's `/my-items` ramp p99 over 1 s before reaching peak in earlier benchmark generations. 2048 matches Kong/APISIX per-worker × 4 (`keepalive_pool=512` passed from their declarative YAML) and Python's `AIOHTTP_LIMIT_PER_HOST × 4`. |
+| `LISTEN_BACKLOG`    | `4096`                   | `listen(2)` backlog passed to `apigate::ServeConfig::backlog`. Matches cumulative reuseport capacity of Kong / APISIX / Python on a 4-core host. Kernel still clamps to `net.core.somaxconn` — raise that on the host too. Requires `apigate ≥ 0.2.6` (`ServeConfig`/`run_with`). |
 
 Timeouts use [`humantime`](https://docs.rs/humantime) syntax (`10s`, `500ms`).
 
@@ -77,8 +78,6 @@ Compose from the repo root brings this up alongside `auth-service`,
     otherwise re-parses on every `.post()`.
   - `.no_proxy()` disables `HTTP(S)_PROXY` autodetection — all traffic is
     internal and must not be routed through a caller's proxy env.
-  - `tcp_keepalive(15s)` keeps pooled sockets alive across k6 profile
-    pauses; without it the next wave pays a full TCP handshake per upstream.
   - `tcp_nodelay(true)` disables Nagle on the auth hop — `/verify` payloads
     are small (~150 B request, ~80 B reply), Nagle's 40 ms cork would
     dominate latency.
@@ -87,8 +86,8 @@ Compose from the repo root brings this up alongside `auth-service`,
   - `pool_idle_timeout(POOL_IDLE_TIMEOUT)` and `pool_max_idle_per_host(AUTH_POOL_MAX_IDLE_PER_HOST)`
     keep a hot pool under bursty ramps so the gateway doesn't open a fresh
     TCP connection (and burn an ephemeral port → TIME_WAIT) per request.
-    The default 2048 matches cumulative auth-pool capacity in kong (4 ×
-    `KEEPALIVE_POOL_SIZE=512` in `lua/require_auth.lua`) and python
+    The default 2048 matches cumulative auth-pool capacity in Kong/APISIX
+    (4 × `keepalive_pool=512` from `kong.yml` / `apisix.yaml`) and Python
     (4 × `AIOHTTP_LIMIT_PER_HOST=512`).
   - All errors (network, non-2xx, bad JSON) collapse to `unauthorized` so
     upstream details never leak into the response.
@@ -104,17 +103,20 @@ Compose from the repo root brings this up alongside `auth-service`,
   (~80–150 B), Nagle's 40 ms cork would dominate latency. The upstream
   side (gateway → data) already has `TCP_NODELAY` from `UpstreamConfig`'s
   default.
+- **Inbound HTTP keep-alive.** axum/hyper keeps HTTP/1.1 client connections
+  persistent by default; `ServeConfig` does not expose a request-count or idle
+  timeout knob, so there is no additional apigate-side value to set here.
 - **Bounded upstream idle pool.** `UpstreamConfig::pool_max_idle_per_host(2048)`.
   Default is `usize::MAX` — under k6 ramping the idle pool would grow
   without bound (FD blow-up + GC churn). 2048 mirrors what cumulative
-  reuseport capacity gives kong (4 × 512) / python (4 × 512) on the same
-  host. With `ulimit -n=65536` (see root README's "Host requirements")
-  the single tokio process holds 2048 idle + ~256 auth + a few hundred
-  inbound + ~50 misc — well under the limit.
-- **`SO_KEEPALIVE` override on the upstream connector.** apigate sets the
-  TCP keepalive idle to `pool_idle_timeout` (= 120s here). We override to
-  30s through `configure_connector(|c| c.set_keepalive(...))` so the kernel
-  reaps half-closed pooled sockets quickly across k6 profile pauses —
-  same intent as aiohttp `enable_cleanup_closed=True` in gateway-python.
+  reuseport capacity gives Kong/APISIX (4 × 512) and Python (4 × 512) on
+  the same host. With `ulimit -n=65536` (see root README's "Host requirements")
+  the single tokio process holds up to 2048 idle data + 2048 idle auth +
+  inbound / in-flight sockets — well under the limit.
+- **Upstream TCP keepalive.** `TCP_KEEPALIVE` from `.env` is applied through
+  `UpstreamConfig::configure_connector` / `HttpConnector::set_keepalive(...)`
+  on data sockets; `AuthClient` receives the same config value for reqwest
+  auth-service sockets. HTTP keep-alive pool idle remains configured separately
+  at 120s across all gateways.
 - **Release profile.** `lto = "thin"`, `codegen-units = 1`, `strip = true` —
   standard Rust perf flags.

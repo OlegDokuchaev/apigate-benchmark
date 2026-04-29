@@ -3,8 +3,6 @@ mod config;
 mod hooks;
 mod routes;
 
-use std::time::Duration;
-
 use crate::auth_client::AuthClient;
 use crate::config::AppConfig;
 use crate::routes::api;
@@ -21,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
         &cfg.auth_backend,
         cfg.verify_timeout,
         cfg.pool_idle_timeout,
+        cfg.tcp_keepalive,
         cfg.auth_pool_max_idle_per_host,
     )?;
 
@@ -28,8 +27,11 @@ async fn main() -> anyhow::Result<()> {
         .connect_timeout(cfg.connect_timeout)
         .pool_idle_timeout(cfg.pool_idle_timeout)
         .pool_max_idle_per_host(cfg.data_pool_max_idle_per_host)
-        .configure_connector(|connector| {
-            connector.set_keepalive(Some(Duration::from_secs(30)));
+        .configure_connector({
+            let tcp_keepalive = cfg.tcp_keepalive;
+            move |connector| {
+                connector.set_keepalive(Some(tcp_keepalive));
+            }
         });
 
     let app = apigate::App::builder()
