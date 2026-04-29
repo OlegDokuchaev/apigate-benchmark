@@ -9,46 +9,20 @@ local cjson = require "cjson.safe"   -- .decode returns nil,err instead of throw
 
 local M = {}
 
--- Full URL is resolved once at module load time, then reused per request.
--- auth:8001 is the compose DNS name of auth-service.
-local AUTH_URL = "http://auth:8001/verify"
-
--- Sized well under the gateway's overall request budget so a slow auth
--- hop can't eat the client's whole deadline.
-local VERIFY_TIMEOUT_MS = 3000
-
--- Per-nginx-worker keepalive pool to auth-service. Without this each
--- /my-items opens a fresh TCP+TLS(-less) connection. Aligned with the
--- other gateways' upstream pool aging (apigate POOL_IDLE_TIMEOUT=120s,
--- python AIOHTTP_KEEPALIVE_TIMEOUT=120s) and with the upstream→data pool
--- (KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT=120s) so all gateway↔upstream
--- hops share the same idle behaviour.
---
--- Pool size is per-worker. With 4 nginx workers (worker_processes=auto on
--- a 4-vCPU host) the cumulative idle pool to auth is 4 × 512 = 2048,
--- matched with apigate's AUTH_POOL_MAX_IDLE_PER_HOST and python's
--- AIOHTTP_LIMIT_PER_HOST × workers. Under ramp the auth-side burst can
--- briefly push concurrent /verify calls past 1k, and the previous 256
--- value forced a TCP handshake + TIME_WAIT close on every excess request.
--- The Kong pre-function sandbox does not expose `os.getenv`, so this
--- value is set at module-load time; tune by editing the constant.
-local KEEPALIVE_TIMEOUT_MS = 120000
-local KEEPALIVE_POOL_SIZE  = 512
-
 -- verify POSTs the Authorization header to auth-service.
 -- We use request_uri (not connect + request + read_body) because it reads
 -- the body for us and the keepalive_* options return the socket to the
 -- per-worker pool automatically. Any transport-level failure maps to
 -- (nil, err); HTTP status is forwarded verbatim.
-local function verify(authorization)
+local function verify(authorization, config)
   local httpc = http.new()
-  httpc:set_timeout(VERIFY_TIMEOUT_MS)
+  httpc:set_timeout(config.verify_timeout_ms)
 
-  local res, err = httpc:request_uri(AUTH_URL, {
+  local res, err = httpc:request_uri(config.auth_url, {
     method  = "POST",
     headers = { Authorization = authorization },
-    keepalive_timeout = KEEPALIVE_TIMEOUT_MS,
-    keepalive_pool    = KEEPALIVE_POOL_SIZE,
+    keepalive_timeout = config.keepalive_timeout_ms,
+    keepalive_pool    = config.keepalive_pool,
   })
   if not res then
     return nil, tostring(err)
@@ -56,13 +30,13 @@ local function verify(authorization)
   return res.status, res.body
 end
 
-function M.run()
+function M.run(config)
   local authorization = kong.request.get_header("authorization")
   if not authorization then
     return kong.response.exit(401, { error = "missing authorization header" })
   end
 
-  local status, body = verify(authorization)
+  local status, body = verify(authorization, config)
   if not status then
     return kong.response.exit(401, { error = "auth verify failed: " .. body })
   end

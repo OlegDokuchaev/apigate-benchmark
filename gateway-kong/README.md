@@ -45,11 +45,10 @@ Error envelope is always `{"error": "<message>"}`.
 1. Read `Authorization`; missing → `401`.
 2. `POST http://auth:8001/verify` via `resty.http` with `request_uri`, using
    per-worker keepalive (`keepalive_pool=512`, `keepalive_timeout=120s` —
-   4 workers × 512 = 2048 cumulative, aligned with the upstream→data nginx
+   4 workers × 512 = 2048 cumulative, aligned with the upstream->data nginx
    pool and with apigate's `AUTH_POOL_MAX_IDLE_PER_HOST=2048` / python's
-   `AIOHTTP_LIMIT_PER_HOST=512` × 4 workers). The constant is hardcoded in
-   `lua/require_auth.lua` because the `pre-function` Lua sandbox does not
-   expose `os.getenv`; tune by editing that file and reloading the gateway.
+   `AIOHTTP_LIMIT_PER_HOST=512` × 4 workers). The auth URL, timeout, and
+   keepalive values are passed from `kong.yml` into `require_auth.run(...)`.
 3. Any transport failure → `401`; any non-2xx → `401` (collapsed so
    upstream status never leaks).
 4. Decode `{user_id, email}` with `cjson.safe` (non-throwing); malformed
@@ -62,7 +61,7 @@ Equivalent of `../gateway-apigate/src/hooks.rs::require_auth` +
 ## Body validation / rewrite
 
 - **`validate()`** — `POST /items/search`, schema
-  `{ category?: string, max_price?: number }`. Valid bodies are forwarded
+  `{ category?: string, max_price?: integer }`. Valid bodies are forwarded
   untouched; malformed input → `400`.
 - **`remap()`** — `POST /items/lookup`, public `{ q }` is rewritten to
   internal `{ query, limit: 20, source: "gateway" }` via
@@ -92,10 +91,13 @@ Set in the root `docker-compose.yml` under the `gateway-kong` service:
 | `KONG_PROXY_ACCESS_LOG`                    | `off`     | No per-request JSON logging to stdout.          |
 | `KONG_ADMIN_ACCESS_LOG`                    | `off`     |                                                 |
 | `KONG_NGINX_EVENTS_WORKER_CONNECTIONS`     | `16384`   | Per-worker connection cap. Lifts nginx's 1024 default — at 4 workers × 1024 we run out of slots well before saturating CPU. Must live in the `events {}` block, hence `_EVENTS_` (not `_HTTP_`). |
+| `KONG_NGINX_HTTP_KEEPALIVE_TIMEOUT`        | `120s`    | Client -> gateway HTTP keep-alive idle timeout. Mirrors APISIX inbound keep-alive and the upstream pool idle. |
+| `KONG_NGINX_HTTP_KEEPALIVE_REQUESTS`       | `1000000` | Recycle inbound client connections after N requests; high enough not to age sockets during the matrix. |
 | `KONG_NGINX_PROXY_TCP_NODELAY`             | `on`      | Disable Nagle on upstream sockets — the four routes carry small JSON, Nagle's 40 ms cork would dominate latency. |
 | `KONG_UPSTREAM_KEEPALIVE_POOL_SIZE`        | `512`     | Nginx upstream pool size per worker to data (≈ 2048 cumulative on a 4-core host). |
-| `KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS`     | `10000`   | Recycle connection after N requests; high enough not to age out mid-ramp. |
-| `KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`     | `120`     | Seconds — aligned with apigate `POOL_IDLE_TIMEOUT` and python `AIOHTTP_KEEPALIVE_TIMEOUT` so the three gateways share the same pool aging behaviour. |
+| `KONG_UPSTREAM_KEEPALIVE_MAX_REQUESTS`     | `1000000` | Recycle connection after N requests; high enough not to age sockets during the matrix. |
+| `KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`     | `120`     | Seconds — aligned with apigate `POOL_IDLE_TIMEOUT`, APISIX `keepalive_pool.idle_timeout`, and python `AIOHTTP_KEEPALIVE_TIMEOUT` so the four gateways share the same pool aging behaviour. |
+| `KONG_NGINX_PROXY_PROXY_SOCKET_KEEPALIVE`  | `on`      | Enables TCP `SO_KEEPALIVE` on nginx proxy -> data upstream sockets. Probe timing comes from the compose service sysctl `net.ipv4.tcp_keepalive_time=30`. |
 | `KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES`      | `require_auth,transforms` | Whitelist the two local modules for the sandboxed `pre-function` plugin. |
 | `LD_PRELOAD`                               | `libjemalloc.so.2` | Set by the Dockerfile.                 |
 
@@ -120,8 +122,8 @@ docker run --rm \
   once you cross ~8 workers. Same family of fix as `mimalloc` in apigate.
 - **`request_uri` with keepalive options.** Simpler than manual
   `connect → request → read_body → set_keepalive`, and returns the socket
-  to the per-worker pool automatically. A module-level `AUTH_URL` means
-  no string building per request.
+  to the per-worker pool automatically. Auth URL, timeout, keep-alive idle,
+  and pool size are passed from `kong.yml` into `require_auth.run(...)`.
 - **`cjson.safe`.** The safe variant returns `nil, err` on parse failures
   instead of raising — lets us check `if not parsed` and respond `401`
   without a `pcall`.

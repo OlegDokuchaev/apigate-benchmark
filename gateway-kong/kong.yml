@@ -34,7 +34,13 @@ services:
           - name: pre-function
             config:
               access:
-                - require("require_auth").run()
+                - |
+                  require("require_auth").run({
+                    auth_url = "http://auth:8001/verify",
+                    verify_timeout_ms = 3000,
+                    keepalive_timeout_ms = 120000,
+                    keepalive_pool = 512,
+                  })
 
       - name: items-search
         paths:

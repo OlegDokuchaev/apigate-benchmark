@@ -16,7 +16,11 @@ local function trim(s)
   return s:match("^%s*(.-)%s*$")
 end
 
--- validate: /items/search body schema is { category?: string, max_price?: number }.
+local function is_integer(value)
+  return type(value) == "number" and value == math.floor(value)
+end
+
+-- validate: /items/search body schema is { category?: string, max_price?: integer }.
 -- Valid bodies are forwarded untouched; we only reject malformed input.
 function M.validate()
   local body = kong.request.get_body("application/json")
@@ -26,8 +30,8 @@ function M.validate()
   if body.category ~= nil and type(body.category) ~= "string" then
     return kong.response.exit(400, { error = "category must be a string" })
   end
-  if body.max_price ~= nil and type(body.max_price) ~= "number" then
-    return kong.response.exit(400, { error = "max_price must be a number" })
+  if body.max_price ~= nil and not is_integer(body.max_price) then
+    return kong.response.exit(400, { error = "max_price must be an integer" })
   end
 end
 
