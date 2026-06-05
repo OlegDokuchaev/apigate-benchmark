@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use apigate::ApigateError;
+use reqwest::header::AUTHORIZATION;
 use reqwest::Url;
 use serde::Deserialize;
 
@@ -43,7 +44,7 @@ impl AuthClient {
         let resp = self
             .http
             .post(self.verify_url.clone())
-            .header("authorization", authorization)
+            .header(AUTHORIZATION, authorization)
             .send()
             .await
             .map_err(|e| ApigateError::unauthorized(format!("auth verify failed: {e}")))?;

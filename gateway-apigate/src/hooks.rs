@@ -6,10 +6,9 @@ use crate::auth_client::AuthClient;
 pub async fn require_auth(ctx: &mut apigate::PartsCtx, auth: &AuthClient) -> apigate::HookResult {
     let token = ctx
         .header("authorization")
-        .ok_or_else(|| apigate::ApigateError::unauthorized("missing authorization header"))?
-        .to_string();
+        .ok_or_else(|| apigate::ApigateError::unauthorized("missing authorization header"))?;
 
-    let user = auth.verify(&token).await?;
+    let user = auth.verify(token).await?;
 
     ctx.set_header("x-user-id", &user.user_id)?;
     ctx.set_header("x-user-email", &user.email)?;
