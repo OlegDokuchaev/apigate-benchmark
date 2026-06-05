@@ -36,8 +36,7 @@ local function verify(authorization, config)
 end
 
 function M.run(config)
-  local headers = ngx.req.get_headers()
-  local authorization = headers.authorization or headers.Authorization
+  local authorization = ngx.var.http_authorization
   if not authorization then
     return exit_json(401, "missing authorization header")
   end
@@ -57,7 +56,7 @@ function M.run(config)
     return exit_json(401, "bad verify response")
   end
 
-  ngx.req.set_header("x-user-id", tostring(parsed.user_id))
+  ngx.req.set_header("x-user-id", parsed.user_id)
   ngx.req.set_header("x-user-email", parsed.email)
   ngx.req.clear_header("Authorization")
 end
