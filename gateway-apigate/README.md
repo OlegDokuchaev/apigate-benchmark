@@ -1,6 +1,6 @@
 # gateway-apigate
 
-Rust reference gateway built with `apigate = 0.2.6`, `tokio`, `reqwest`, and `mimalloc`.
+Rust reference gateway built with `apigate = 1.1.0`, `tokio`, `reqwest`, and `mimalloc`.
 
 ## Routes
 

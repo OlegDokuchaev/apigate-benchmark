@@ -10,27 +10,30 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apigate"
-version = "0.2.6"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e46a495138ec250e0f06d753a86fce667b6900509d00535aefe01fec15097dd9"
+checksum = "2c78358b9e7bb163fcb46a09a892788bc13e74aab38f376d7d0e99dbdcf102d8"
 dependencies = [
  "apigate-core",
  "apigate-macros",
  "axum",
  "http",
+ "serde",
  "serde_json",
  "serde_urlencoded",
 ]
 
 [[package]]
 name = "apigate-core"
-version = "0.2.6"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5bf6666abf1a714065e69becf51a6df6306cbf8006deb9b04ccdab6e0d5f744"
+checksum = "7fdb9f093a428d5da7b784d7e4f6f2a0ae14e7b10e520ebb6e5690b01a2e596c"
 dependencies = [
  "axum",
  "http",
  "hyper-util",
+ "serde",
+ "serde_html_form",
  "smallvec",
  "socket2",
  "thiserror",
@@ -41,9 +44,9 @@ dependencies = [
 
 [[package]]
 name = "apigate-macros"
-version = "0.2.6"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b6f590585e43cdc8188092e5e46bcacfeec345d3e4fe54633bb18ad41793df2"
+checksum = "b0750add963bf8a58a6cf3e3c23a8657e498ce1e4108cca8dc9f332b9b3c24bc"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -959,6 +962,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_html_form"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0946d52b4b7e28823148aebbeceb901012c595ad737920d504fa8634bb099e6f"
+dependencies = [
+ "form_urlencoded",
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde_core",
 ]
 
 [[package]]
